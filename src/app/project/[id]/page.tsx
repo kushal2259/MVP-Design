@@ -1,0 +1,1577 @@
+'use client';
+import { useState, useEffect, use } from 'react';
+import Link from 'next/link';
+import { getProject, saveProject } from '@/lib/store';
+import {
+  generateFloorPlans, calculateSpaceAllocation,
+  generateCostEstimate, generateBOQ, generateTimeline
+} from '@/lib/generator';
+import { generateLayouts } from '@/lib/layoutSolver';
+import type { Project, ActiveTab, FloorPlan, PlotSettings, LayoutOption } from '@/types';
+import dynamic from 'next/dynamic';
+
+const FloorPlanRenderer = dynamic(() => import('@/components/FloorPlanRenderer'), { ssr: false });
+const FloorPlanV2Renderer = dynamic(() => import('@/components/FloorPlanV2Renderer'), { ssr: false });
+const CopilotChat = dynamic(() => import('@/components/CopilotChat'), { ssr: false });
+const ElevationRenderer = dynamic(() => import('@/components/ElevationRenderer'), { ssr: false });
+const MEPRenderer = dynamic(() => import('@/components/MEPRenderer'), { ssr: false });
+const CADEditor = dynamic(() => import('@/components/CADEditor'), { ssr: false });
+const DrawingViewport = dynamic(() => import('@/components/DrawingViewport'), { ssr: false });
+const ThreeDViewer = dynamic(() => import('@/components/ThreeDViewer'), { ssr: false });
+const ThreeDViewerV2 = dynamic(() => import('@/components/ThreeDViewerV2'), { ssr: false });
+const InteriorProductsCatalog = dynamic(() => import('@/components/InteriorProductsCatalog'), { ssr: false });
+const InteriorRenderView = dynamic(() => import('@/components/InteriorRenderView'), { ssr: false });
+
+const TABS: { id: ActiveTab; label: string; icon: string; group?: string }[] = [
+  { id: 'overview', label: 'Overview', icon: '◎' },
+  { id: 'floor-plans', label: 'Floor Plans', icon: '◱', group: 'Design' },
+  { id: 'cad-editor', label: 'CAD Editor', icon: '✎', group: 'Design' },
+  { id: '3d-view', label: '3D View', icon: '◈', group: 'Design' },
+  { id: 'elevations', label: 'Elevations', icon: '⬡', group: 'Design' },
+  { id: 'interior', label: 'Interior', icon: '🛋', group: 'Design' },
+  { id: 'structural', label: 'Structural', icon: '◐', group: 'Engineering' },
+  { id: 'electrical', label: 'Electrical', icon: '⚡', group: 'Engineering' },
+  { id: 'plumbing', label: 'Plumbing', icon: '◉', group: 'Engineering' },
+  { id: 'cost', label: 'Cost Est.', icon: '₹', group: 'Estimates' },
+  { id: 'boq', label: 'BOQ', icon: '≡', group: 'Estimates' },
+  { id: 'timeline', label: 'Timeline', icon: '▷', group: 'Estimates' },
+  { id: 'compliance', label: 'Compliance', icon: '✓' },
+  { id: 'export', label: 'Export', icon: '↗' },
+];
+
+export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  const [project, setProject] = useState<Project | null>(null);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
+  const [generating, setGenerating] = useState(false);
+  const [genStep, setGenStep] = useState('');
+  const [analysisData, setAnalysisData] = useState<Record<string, unknown> | null>(null);
+  const [interiorData, setInteriorData] = useState<{ concepts: unknown[] } | null>(null);
+  const [complianceData, setComplianceData] = useState<Record<string, unknown> | null>(null);
+  const [mounted, setMounted] = useState(false);
+  const [editedFloorPlans, setEditedFloorPlans] = useState<FloorPlan[] | null>(null);
+  const [layoutOptions, setLayoutOptions] = useState<LayoutOption[] | null>(null);
+  const [selectedLayoutId, setSelectedLayoutId] = useState<'option-a' | 'option-b' | 'option-c'>('option-a');
+  const [geminiKey, setGeminiKey] = useState('');
+
+  useEffect(() => {
+    setMounted(true);
+    const p = getProject(id);
+    if (p) {
+      setProject(p);
+      if (p.layoutOptions) {
+        setLayoutOptions(p.layoutOptions);
+        setSelectedLayoutId(p.selectedLayoutId || 'option-a');
+      }
+    }
+    const key = localStorage.getItem('ARCH_COPILOT_GEMINI_KEY') || '';
+    setGeminiKey(key);
+  }, [id]);
+
+  const generateDesign = async () => {
+    if (!project) return;
+    setGenerating(true);
+
+    try {
+      // Step 1: AI analysis
+      setGenStep('Analyzing requirements with AI...');
+      const analysisRes = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirements: project.requirements, type: 'analyze' }),
+      });
+      const analysisJson = await analysisRes.json();
+      if (analysisJson.success) setAnalysisData(analysisJson.data);
+
+      // Step 2: Generate floor plans (both new Vastu layouts + legacy)
+      setGenStep('Generating Vastu-compliant floor plan options...');
+      await new Promise(r => setTimeout(r, 800));
+
+      const plotSettings: PlotSettings = {
+        width: project.requirements.plotWidth,
+        depth: project.requirements.plotDepth,
+        location: project.requirements.location,
+        floors: project.requirements.floors,
+        style: (['modern', 'contemporary', 'traditional', 'luxury'].includes(project.requirements.style)
+          ? project.requirements.style : 'modern') as PlotSettings['style'],
+        budgetLakhs: project.requirements.budget,
+        bedrooms: project.requirements.bhk,
+        kitchenStyle: project.requirements.specialRooms.includes('Home Office') ? 'compact' : 'large',
+        balconyRequired: true,
+      };
+
+      const layouts = generateLayouts(plotSettings);
+      setLayoutOptions(layouts);
+
+      const floorPlans = generateFloorPlans(project.requirements);
+      const spaceAllocation = calculateSpaceAllocation(floorPlans);
+
+      // Step 3: Cost & BOQ
+      setGenStep('Calculating cost estimates...');
+      await new Promise(r => setTimeout(r, 600));
+      const costResult = generateCostEstimate(project.requirements, floorPlans);
+      const boq = generateBOQ(costResult.builtUp);
+      const timeline = generateTimeline(project.requirements.floors);
+
+      // Step 4: Interior concepts
+      setGenStep('Generating interior design concepts...');
+      const interiorRes = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirements: project.requirements, type: 'interior' }),
+      });
+      const interiorJson = await interiorRes.json();
+      if (interiorJson.success) setInteriorData(interiorJson.data);
+
+      // Step 5: Compliance
+      setGenStep('Checking compliance...');
+      const complianceRes = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirements: project.requirements, type: 'compliance' }),
+      });
+      const complianceJson = await complianceRes.json();
+      if (complianceJson.success) setComplianceData(complianceJson.data);
+
+      // Save everything
+      const updated: Project = {
+        ...project,
+        status: 'generated',
+        floorPlans,
+        layoutOptions: layouts,
+        selectedLayoutId: 'option-a',
+        plotSettings,
+        costEstimate: costResult,
+        boq,
+        timeline,
+        analysis: {
+          parsedRequirements: analysisJson.data?.parsedRequirements || {},
+          validationNotes: analysisJson.data?.validationNotes || [],
+          spaceAllocation,
+        },
+      };
+      saveProject(updated);
+      setProject(updated);
+      setGenStep('');
+      setActiveTab('overview');
+    } catch (err) {
+      console.error(err);
+      setGenStep('Error during generation. Please try again.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  if (!mounted) return null;
+  if (!project) return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-body)' }}>
+      <div>Project not found. <Link href="/dashboard">← Dashboard</Link></div>
+    </div>
+  );
+
+  const isGenerated = project.status === 'generated' || project.status === 'reviewing';
+  const req = project.requirements;
+
+  return (
+    <div style={{ minHeight: '100vh', backgroundColor: 'var(--paper)', fontFamily: 'var(--font-body)', display: 'flex', flexDirection: 'column' }}>
+      {/* Top nav */}
+      <div style={{
+        height: 56, borderBottom: '1px solid var(--line)',
+        display: 'flex', alignItems: 'center',
+        padding: '0 24px', gap: 16,
+        backgroundColor: 'white',
+        position: 'sticky', top: 0, zIndex: 100,
+      }}>
+        <Link href="/dashboard" style={{ color: 'var(--steel)', textDecoration: 'none', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 4L6 8l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+          Dashboard
+        </Link>
+        <span style={{ color: 'var(--line-strong)' }}>/</span>
+        <h1 style={{ fontSize: 15, fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{project.name}</h1>
+        <div style={{
+          display: 'inline-block', padding: '3px 10px', borderRadius: 100,
+          backgroundColor: isGenerated ? '#f0fdf4' : '#fff7ed',
+          color: isGenerated ? '#16a34a' : '#c8853a',
+          fontSize: 11, fontWeight: 500,
+        }}>
+          {isGenerated ? 'Generated' : project.status.charAt(0).toUpperCase() + project.status.slice(1)}
+        </div>
+        {isGenerated && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="Gemini API key (for AI chat)"
+              value={geminiKey}
+              onChange={e => {
+                setGeminiKey(e.target.value);
+                localStorage.setItem('ARCH_COPILOT_GEMINI_KEY', e.target.value);
+              }}
+              style={{
+                padding: '5px 10px', borderRadius: 4,
+                border: '1.5px solid var(--line-strong)',
+                fontSize: 12, width: 200,
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--steel)',
+              }}
+            />
+            <button onClick={() => window.print()} style={{
+              padding: '6px 16px', borderRadius: 4,
+              border: '1.5px solid var(--line-strong)',
+              background: 'white', color: 'var(--ink)',
+              fontSize: 13, cursor: 'pointer',
+              fontFamily: 'var(--font-body)',
+            }}>
+              Export PDF
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* If not generated: generation screen */}
+      {!isGenerated ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 48 }}>
+          <div style={{ maxWidth: 560, width: '100%', textAlign: 'center' }}>
+            <div style={{ marginBottom: 32 }}>
+              <svg width="80" height="80" viewBox="0 0 28 28" fill="none" style={{ display: 'block', margin: '0 auto 24px' }}>
+                <rect x="2" y="2" width="24" height="24" rx="2" stroke="var(--blueprint)" strokeWidth="1.5"/>
+                <path d="M7 21L21 7M7 7h14M7 7v14" stroke="var(--amber)" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 36, fontWeight: 300, marginBottom: 12, letterSpacing: '-0.02em' }}>Ready to Generate</h2>
+              <p style={{ color: 'var(--steel)', fontSize: 16, lineHeight: 1.7, fontWeight: 300 }}>
+                We'll create your complete design package: floor plans, elevations, cost estimates, BOQ, interior concepts, and compliance notes.
+              </p>
+            </div>
+
+            {/* Project summary */}
+            <div style={{
+              border: '1px solid var(--line)', borderRadius: 8,
+              backgroundColor: 'white', padding: '24px',
+              marginBottom: 32, textAlign: 'left',
+            }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 32px' }}>
+                {[
+                  { k: 'Plot', v: `${req.plotWidth}×${req.plotDepth} ft (${req.plotSize} sq yd)` },
+                  { k: 'Location', v: req.location },
+                  { k: 'Configuration', v: `${req.bhk} BHK · ${req.floors === 1 ? 'G' : `G+${req.floors - 1}`}` },
+                  { k: 'Style', v: req.style.charAt(0).toUpperCase() + req.style.slice(1) },
+                  { k: 'Budget', v: `₹${req.budget} Lakhs` },
+                  { k: 'Special', v: req.specialRooms.length > 0 ? req.specialRooms.slice(0, 2).join(', ') + (req.specialRooms.length > 2 ? '...' : '') : 'None' },
+                ].map((item, i) => (
+                  <div key={i}>
+                    <div style={{ fontSize: 10, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{item.k}</div>
+                    <div style={{ fontSize: 14, color: 'var(--ink)', marginTop: 2 }}>{item.v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {generating ? (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center', marginBottom: 16 }}>
+                  {[0, 1, 2].map(i => (
+                    <div key={i} style={{
+                      width: 8, height: 8, borderRadius: '50%',
+                      backgroundColor: 'var(--blueprint)',
+                      animation: `pulse-dot 1.2s ease-in-out ${i * 0.2}s infinite`,
+                    }}/>
+                  ))}
+                </div>
+                <p style={{ color: 'var(--blueprint)', fontSize: 14, fontWeight: 500 }}>{genStep}</p>
+                <div style={{
+                  marginTop: 16, height: 4, backgroundColor: 'var(--paper-dark)', borderRadius: 2, overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%', borderRadius: 2,
+                    backgroundColor: 'var(--blueprint)',
+                    width: '60%',
+                    transition: 'width 1s ease',
+                    backgroundImage: 'linear-gradient(90deg, var(--blueprint) 0%, var(--blueprint-light) 50%, var(--blueprint) 100%)',
+                    backgroundSize: '200% 100%',
+                    animation: 'shimmer 2s infinite',
+                  }}/>
+                </div>
+              </div>
+            ) : (
+              <button onClick={generateDesign} style={{
+                width: '100%', padding: '16px',
+                borderRadius: 6, border: 'none',
+                backgroundColor: 'var(--blueprint)', color: 'white',
+                fontSize: 16, fontWeight: 500, cursor: 'pointer',
+                fontFamily: 'var(--font-body)',
+                boxShadow: '0 4px 24px rgba(26,39,68,0.2)',
+                transition: 'transform 0.15s',
+              }}
+                onMouseEnter={e => (e.currentTarget.style.transform = 'translateY(-1px)')}
+                onMouseLeave={e => (e.currentTarget.style.transform = 'none')}
+              >
+                Generate Design Package →
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* Generated: tabbed view */
+        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+          {/* Left sidebar tabs */}
+          <div style={{
+            width: 210, borderRight: '1px solid var(--line)',
+            backgroundColor: 'white', flexShrink: 0,
+            overflowY: 'auto', paddingTop: 8,
+          }}>
+            {(() => {
+              const groups: string[] = [];
+              const seen = new Set<string>();
+              TABS.forEach(t => { const g = t.group || ''; if (!seen.has(g)) { seen.add(g); groups.push(g); } });
+              return groups.map(group => (
+                <div key={group}>
+                  {group && (
+                    <div style={{ padding: '10px 20px 4px', fontSize: 9, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                      {group}
+                    </div>
+                  )}
+                  {TABS.filter(t => (t.group || '') === group).map(tab => (
+                    <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+                      width: '100%', padding: '9px 20px',
+                      display: 'flex', alignItems: 'center', gap: 9,
+                      backgroundColor: activeTab === tab.id ? 'rgba(26,39,68,0.07)' : 'transparent',
+                      borderLeft: `3px solid ${activeTab === tab.id ? 'var(--blueprint)' : 'transparent'}`,
+                      border: 'none', cursor: 'pointer',
+                      color: activeTab === tab.id ? 'var(--blueprint)' : 'var(--steel)',
+                      fontSize: 12.5, fontWeight: activeTab === tab.id ? 600 : 400,
+                      textAlign: 'left', fontFamily: 'var(--font-body)',
+                      transition: 'all 0.15s',
+                    }}>
+                      <span style={{ fontSize: 13, opacity: 0.75 }}>{tab.icon}</span>
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              ));
+            })()}
+          </div>
+
+          {/* Main content area */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '32px 40px' }}>
+            {activeTab === 'overview' && <OverviewTab project={project} analysisData={analysisData} />}
+            {activeTab === 'floor-plans' && (
+              <FloorPlansTab
+                project={project}
+                editedPlans={editedFloorPlans}
+                layoutOptions={layoutOptions}
+                selectedLayoutId={selectedLayoutId}
+                onSelectLayout={(id) => {
+                  setSelectedLayoutId(id);
+                  saveProject({ ...project, selectedLayoutId: id });
+                }}
+              />
+            )}
+            {activeTab === 'cad-editor' && (
+              <CADEditorTab
+                project={project}
+                editedPlans={editedFloorPlans}
+                layoutOptions={layoutOptions}
+                selectedLayoutId={selectedLayoutId}
+                onSelectLayout={setSelectedLayoutId}
+                onPlansChange={(plans) => {
+                  setEditedFloorPlans(plans);
+                  saveProject({ ...project, floorPlans: plans });
+                }}
+              />
+            )}
+            {activeTab === '3d-view' && (
+              <ThreeDViewTab
+                project={project}
+                editedPlans={editedFloorPlans}
+                layoutOptions={layoutOptions}
+                selectedLayoutId={selectedLayoutId}
+              />
+            )}
+            {activeTab === 'elevations' && <ElevationsTab project={project} />}
+            {activeTab === 'interior' && (
+              <InteriorTab
+                project={project}
+                interiorData={interiorData}
+                editedPlans={editedFloorPlans}
+                onPlansChange={(plans) => {
+                  setEditedFloorPlans(plans);
+                  saveProject({ ...project, floorPlans: plans });
+                }}
+              />
+            )}
+            {activeTab === 'structural' && <EngineeringTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} type="structural" />}
+            {activeTab === 'electrical' && <EngineeringTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} type="electrical" />}
+            {activeTab === 'plumbing' && <EngineeringTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} type="plumbing" />}
+            {activeTab === 'cost' && <CostTab project={project} />}
+            {activeTab === 'boq' && <BOQTab project={project} />}
+            {activeTab === 'timeline' && <TimelineTab project={project} />}
+            {activeTab === 'compliance' && <ComplianceTab project={project} complianceData={complianceData} />}
+            {activeTab === 'export' && <ExportTab project={project} />}
+          </div>
+        </div>
+      )}
+
+      {/* AI Copilot Chat (floats bottom-right when generated) */}
+      {isGenerated && project.plotSettings && (
+        <CopilotChat
+          settings={project.plotSettings}
+          onUpdateSettings={(newSettings) => {
+            const updated = { ...project, plotSettings: newSettings };
+            const newLayouts = generateLayouts(newSettings);
+            setLayoutOptions(newLayouts);
+            saveProject({ ...updated, layoutOptions: newLayouts });
+            setProject({ ...updated, layoutOptions: newLayouts });
+          }}
+          geminiKey={geminiKey}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---- Tab Components ---- */
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 300, marginBottom: 24, letterSpacing: '-0.02em' }}>
+      {children}
+    </h2>
+  );
+}
+
+function OverviewTab({ project, analysisData }: { project: Project; analysisData: Record<string, unknown> | null }) {
+  const req = project.requirements;
+  const cost = project.costEstimate;
+  const builtUp = project.floorPlans?.reduce((s, p) => s + p.builtUpArea, 0) || 0;
+
+  return (
+    <div>
+      <SectionTitle>Project Overview</SectionTitle>
+
+      {/* Key metrics */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 40 }}>
+        {[
+          { label: 'Built-up Area', value: `${builtUp.toLocaleString()} sq.ft`, sub: `${req.plotSize} sq yd plot` },
+          { label: 'Configuration', value: `${req.bhk} BHK`, sub: `${req.floors === 1 ? 'G' : `G+${req.floors - 1}`} · ${req.floors} floor${req.floors > 1 ? 's' : ''}` },
+          { label: 'Standard Cost', value: cost ? `₹${cost.standard}L` : '—', sub: `₹${cost ? cost.economy : '—'}L – ₹${cost ? cost.premium : '—'}L range` },
+          { label: 'Style', value: req.style.charAt(0).toUpperCase() + req.style.slice(1), sub: req.location },
+        ].map((m, i) => (
+          <div key={i} style={{ padding: '20px', border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white' }}>
+            <div style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>{m.label}</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, color: 'var(--blueprint)', lineHeight: 1 }}>{m.value}</div>
+            <div style={{ fontSize: 12, color: 'var(--steel)', marginTop: 6 }}>{m.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+        {/* AI Analysis */}
+        {analysisData && (
+          <div style={{ border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white', padding: '24px' }}>
+            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--blueprint)' }}>AI Design Analysis</h3>
+            {(analysisData as { designIntent?: string }).designIntent && (
+              <p style={{ fontSize: 14, lineHeight: 1.7, color: 'var(--ink)', marginBottom: 16, fontStyle: 'italic', fontFamily: 'var(--font-display)' }}>
+                "{(analysisData as { designIntent: string }).designIntent}"
+              </p>
+            )}
+            {(analysisData as { validationNotes?: string[] }).validationNotes?.map((note, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-start' }}>
+                <span style={{ color: 'var(--blueprint)', fontSize: 10, marginTop: 4, flexShrink: 0 }}>●</span>
+                <span style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.6 }}>{note}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Space Allocation */}
+        <div style={{ border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white', padding: '24px' }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--blueprint)' }}>Space Allocation</h3>
+          {project.analysis?.spaceAllocation.slice(0, 8).map((s, i) => (
+            <div key={i} style={{ marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: 'var(--ink)' }}>{s.room}</span>
+                <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>{s.area} sq.ft · {s.percentage}%</span>
+              </div>
+              <div style={{ height: 4, backgroundColor: 'var(--paper-dark)', borderRadius: 2 }}>
+                <div style={{ height: '100%', backgroundColor: 'var(--blueprint-light)', borderRadius: 2, width: `${s.percentage}%`, opacity: 0.7 }}/>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Floor breakdown */}
+        <div style={{ border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white', padding: '24px' }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--blueprint)' }}>Floor Areas</h3>
+          {project.floorPlans?.map(plan => (
+            <div key={plan.floor} style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '12px 0', borderBottom: '1px solid var(--line)',
+            }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 500 }}>
+                  {plan.floor === 0 ? 'Ground Floor' : plan.floor === 1 ? 'First Floor' : plan.floor === 2 ? 'Second Floor' : 'Terrace'}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--steel)' }}>{plan.rooms.length} rooms / spaces</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--blueprint)' }}>{plan.totalArea.toLocaleString()}</div>
+                <div style={{ fontSize: 11, color: 'var(--steel)' }}>sq.ft</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Cost summary */}
+        {cost && (
+          <div style={{ border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white', padding: '24px' }}>
+            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--blueprint)' }}>Cost Summary</h3>
+            {[
+              { label: 'Economy', value: cost.economy, color: '#16a34a' },
+              { label: 'Standard', value: cost.standard, color: 'var(--blueprint)' },
+              { label: 'Premium', value: cost.premium, color: 'var(--amber)' },
+            ].map((tier, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: i < 2 ? '1px solid var(--line)' : 'none' }}>
+                <span style={{ fontSize: 14, color: 'var(--ink)' }}>{tier.label}</span>
+                <span style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: tier.color }}>₹{tier.value}L</span>
+              </div>
+            ))}
+            <div style={{ marginTop: 16, padding: '12px', backgroundColor: 'var(--paper)', borderRadius: 4 }}>
+              <div style={{ fontSize: 11, color: 'var(--steel)', marginBottom: 8, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Breakdown (Standard)</div>
+              {Object.entries(cost.breakdown).map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                  <span style={{ color: 'var(--ink)', textTransform: 'capitalize' }}>{k}</span>
+                  <span style={{ color: 'var(--steel)' }}>₹{v}L</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FloorPlansTab({
+  project, editedPlans, layoutOptions, selectedLayoutId, onSelectLayout,
+}: {
+  project: Project;
+  editedPlans: FloorPlan[] | null;
+  layoutOptions: LayoutOption[] | null;
+  selectedLayoutId: 'option-a' | 'option-b' | 'option-c';
+  onSelectLayout: (id: 'option-a' | 'option-b' | 'option-c') => void;
+}) {
+  const [viewMode, setViewMode] = useState<'vastu' | 'legacy'>('vastu');
+  const [selectedFloor, setSelectedFloor] = useState(0);
+  const plans = editedPlans || project.floorPlans || [];
+  const plan = plans[selectedFloor];
+
+  const selectedLayout = layoutOptions?.find(l => l.id === selectedLayoutId);
+  const req = project.requirements;
+
+  return (
+    <div>
+      <SectionTitle>Floor Plans</SectionTitle>
+
+      {/* View mode toggle */}
+      {layoutOptions && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+          <button onClick={() => setViewMode('vastu')} style={{
+            padding: '8px 20px', borderRadius: 4, fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
+            border: `1.5px solid ${viewMode === 'vastu' ? 'var(--amber)' : 'var(--line-strong)'}`,
+            backgroundColor: viewMode === 'vastu' ? 'var(--amber)' : 'white',
+            color: viewMode === 'vastu' ? 'white' : 'var(--steel)', fontWeight: viewMode === 'vastu' ? 600 : 400,
+          }}>✦ Vastu-Optimized Plans (New)</button>
+          <button onClick={() => setViewMode('legacy')} style={{
+            padding: '8px 20px', borderRadius: 4, fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
+            border: `1.5px solid ${viewMode === 'legacy' ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+            backgroundColor: viewMode === 'legacy' ? 'var(--blueprint)' : 'white',
+            color: viewMode === 'legacy' ? 'white' : 'var(--steel)',
+          }}>Standard View</button>
+        </div>
+      )}
+
+      {/* Vastu layout options */}
+      {viewMode === 'vastu' && layoutOptions && (
+        <div>
+          {/* 3 option cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
+            {layoutOptions.map(opt => (
+              <div
+                key={opt.id}
+                onClick={() => onSelectLayout(opt.id)}
+                style={{
+                  border: `2px solid ${selectedLayoutId === opt.id ? 'var(--amber)' : 'var(--line)'}`,
+                  borderRadius: 8, padding: '18px 20px', cursor: 'pointer',
+                  backgroundColor: selectedLayoutId === opt.id ? '#fff7ed' : 'white',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: selectedLayoutId === opt.id ? 'var(--amber)' : 'var(--blueprint)' }}>
+                    {opt.name}
+                  </div>
+                  {selectedLayoutId === opt.id && (
+                    <div style={{ fontSize: 10, backgroundColor: 'var(--amber)', color: 'white', padding: '2px 8px', borderRadius: 100, fontWeight: 600 }}>
+                      SELECTED
+                    </div>
+                  )}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--amber)', fontWeight: 500, marginBottom: 6 }}>{opt.tagline}</div>
+                <div style={{ fontSize: 12, color: 'var(--steel)', lineHeight: 1.5 }}>{opt.description}</div>
+                <div style={{ marginTop: 10, fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>
+                  {opt.rooms.length} spaces · ×{opt.costMultiplier.toFixed(1)} cost
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Floor selector for selected layout */}
+          {selectedLayout && (
+            <>
+              {project.requirements.floors > 1 && (
+                <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+                  {Array.from(new Set(selectedLayout.rooms.map(r => r.floor))).sort().map(fl => (
+                    <button key={fl} onClick={() => setSelectedFloor(fl)} style={{
+                      padding: '7px 18px', borderRadius: 4, fontSize: 12,
+                      border: `1.5px solid ${selectedFloor === fl ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+                      backgroundColor: selectedFloor === fl ? 'var(--blueprint)' : 'white',
+                      color: selectedFloor === fl ? 'white' : 'var(--steel)',
+                      cursor: 'pointer', fontFamily: 'var(--font-body)',
+                    }}>
+                      {fl === 0 ? 'Ground Floor' : fl === 1 ? 'First Floor' : fl === 2 ? 'Second Floor' : 'Terrace'}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: 24 }}>
+                <div style={{ border: '1px solid var(--line)', borderRadius: 6, overflow: 'hidden', backgroundColor: 'white', padding: 16 }}>
+                  <FloorPlanV2Renderer
+                    rooms={selectedLayout.rooms.filter(r => r.floor === selectedFloor)}
+                    plotWidth={req.plotWidth}
+                    plotDepth={req.plotDepth}
+                  />
+                </div>
+                <div>
+                  <div style={{ border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white', padding: 20 }}>
+                    <div style={{ fontSize: 12, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 12 }}>Room Schedule</div>
+                    {selectedLayout.rooms.filter(r => r.floor === selectedFloor).map(room => (
+                      <div key={room.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--line)', alignItems: 'center' }}>
+                        <span style={{ fontSize: 13, color: 'var(--ink)' }}>{room.name}</span>
+                        <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>{room.w}×{room.h} ft</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Legacy standard view */}
+      {(!layoutOptions || viewMode === 'legacy') && (
+        <>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+            {plans.map((_, i) => (
+              <button key={i} onClick={() => setSelectedFloor(i)} style={{
+                padding: '8px 20px', borderRadius: 4,
+                border: `1.5px solid ${selectedFloor === i ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+                backgroundColor: selectedFloor === i ? 'var(--blueprint)' : 'white',
+                color: selectedFloor === i ? 'white' : 'var(--steel)',
+                fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
+              }}>
+                {i === 0 ? 'Ground Floor' : i === 1 ? 'First Floor' : i === 2 ? 'Second Floor' : 'Terrace'}
+              </button>
+            ))}
+          </div>
+
+          {plan && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: 24 }}>
+              <div style={{ border: '1px solid var(--line)', borderRadius: 6, overflow: 'hidden', backgroundColor: 'white', padding: 16 }}>
+                <FloorPlanRenderer plan={plan} scale={1} />
+              </div>
+              <div>
+                <div style={{ border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white', padding: 20, marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 12 }}>Room Schedule</div>
+                  {plan.rooms.map(room => (
+                    <div key={room.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--line)', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: room.color, border: '1px solid rgba(0,0,0,0.1)' }}/>
+                        <span style={{ fontSize: 13, color: 'var(--ink)' }}>{room.name}</span>
+                      </div>
+                      <span style={{ fontSize: 12, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>{room.area} sq.ft</span>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 0', fontWeight: 600 }}>
+                    <span style={{ fontSize: 13 }}>Total</span>
+                    <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--blueprint)' }}>{plan.totalArea} sq.ft</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function CADEditorTab({ project, editedPlans, layoutOptions, selectedLayoutId, onSelectLayout, onPlansChange }: {
+  project: Project;
+  editedPlans: FloorPlan[] | null;
+  layoutOptions: LayoutOption[] | null;
+  selectedLayoutId: 'option-a' | 'option-b' | 'option-c';
+  onSelectLayout: (id: 'option-a' | 'option-b' | 'option-c') => void;
+  onPlansChange: (plans: FloorPlan[]) => void;
+}) {
+  const [viewMode, setViewMode] = useState<'vastu' | 'legacy'>('vastu');
+  const [activeTab, setActiveTab] = useState<'ground' | 'first' | 'terrace'>('ground');
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [layoutRooms, setLayoutRooms] = useState(() =>
+    layoutOptions?.find(l => l.id === selectedLayoutId)?.rooms || []
+  );
+
+  // Sync when selection changes
+  const selectedLayout = layoutOptions?.find(l => l.id === selectedLayoutId);
+
+  const handleUpdateRoom = (updatedRoom: import('@/types').RoomLayout) => {
+    setLayoutRooms(prev => prev.map(r => r.id === updatedRoom.id ? updatedRoom : r));
+  };
+
+  const req = project.requirements;
+  const plotSettings: PlotSettings = project.plotSettings || {
+    width: req.plotWidth, depth: req.plotDepth, location: req.location,
+    floors: req.floors, style: 'modern', budgetLakhs: req.budget,
+    bedrooms: req.bhk, kitchenStyle: 'large', balconyRequired: true,
+  };
+
+  if (viewMode === 'vastu' && selectedLayout) {
+    const floorTabs: ('ground' | 'first' | 'terrace')[] = ['ground'];
+    if (req.floors >= 2) floorTabs.push('first');
+    if (req.floors >= 3) floorTabs.push('terrace');
+    const floorNum = activeTab === 'ground' ? 0 : activeTab === 'first' ? 1 : 2;
+    const currentRooms = layoutRooms.filter(r => r.floor === floorNum);
+
+    return (
+      <div style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexShrink: 0, flexWrap: 'wrap' }}>
+          <SectionTitle>CAD Editor</SectionTitle>
+          {/* Floor tabs */}
+          {floorTabs.length > 1 && (
+            <div style={{ display: 'flex', gap: 6 }}>
+              {floorTabs.map(f => (
+                <button key={f} onClick={() => setActiveTab(f)} style={{
+                  padding: '5px 14px', borderRadius: 4, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+                  border: `1.5px solid ${activeTab === f ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+                  backgroundColor: activeTab === f ? 'var(--blueprint)' : 'white',
+                  color: activeTab === f ? 'white' : 'var(--steel)',
+                  fontWeight: activeTab === f ? 600 : 400,
+                }}>
+                  {f === 'ground' ? 'Ground Floor' : f === 'first' ? 'First Floor' : 'Second Floor'}
+                </button>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+            {(['option-a', 'option-b', 'option-c'] as const).map(id => {
+              const opt = layoutOptions?.find(l => l.id === id);
+              return opt ? (
+                <button key={id} onClick={() => {
+                  onSelectLayout(id);
+                  setLayoutRooms(layoutOptions?.find(l => l.id === id)?.rooms || []);
+                }} style={{
+                  padding: '5px 14px', borderRadius: 4, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+                  border: `1.5px solid ${selectedLayoutId === id ? 'var(--amber)' : 'var(--line-strong)'}`,
+                  backgroundColor: selectedLayoutId === id ? 'var(--amber)' : 'white',
+                  color: selectedLayoutId === id ? 'white' : 'var(--steel)',
+                  fontWeight: selectedLayoutId === id ? 600 : 400,
+                }}>
+                  {opt.name}
+                </button>
+              ) : null;
+            })}
+            <button onClick={() => setViewMode('legacy')} style={{
+              padding: '5px 14px', borderRadius: 4, fontSize: 12, cursor: 'pointer',
+              border: '1.5px solid var(--line-strong)', background: 'white', color: 'var(--steel)',
+              fontFamily: 'var(--font-body)',
+            }}>Standard View</button>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflow: 'hidden', borderRadius: 8, border: '1px solid var(--line)' }}>
+          <DrawingViewport
+            rooms={layoutRooms}
+            settings={plotSettings}
+            selectedRoomId={selectedRoomId}
+            onSelectRoom={setSelectedRoomId}
+            onUpdateRoom={handleUpdateRoom}
+            activeTab={activeTab}
+            elevationSide="front"
+            sectionType="cross"
+            siteSvg=""
+            roofSvg=""
+            elevationSvg=""
+            sectionSvg=""
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Legacy CAD editor
+  const [selectedFloor, setSelectedFloor] = useState(0);
+  const plans = editedPlans || project.floorPlans || [];
+  const plan = plans[selectedFloor];
+
+  if (!plan) return <div style={{ padding: 32, color: 'var(--steel)' }}>No floor plan data. Generate the design first.</div>;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <SectionTitle>CAD Editor</SectionTitle>
+        {layoutOptions && (
+          <button onClick={() => setViewMode('vastu')} style={{
+            padding: '6px 16px', borderRadius: 4, fontSize: 12, cursor: 'pointer',
+            border: '1.5px solid var(--amber)', color: 'var(--amber)', background: 'white',
+            fontFamily: 'var(--font-body)',
+          }}>← Vastu Plans</button>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        {plans.map((_, i) => (
+          <button key={i} onClick={() => setSelectedFloor(i)} style={{
+            padding: '7px 18px', borderRadius: 4, fontSize: 12,
+            border: `1.5px solid ${selectedFloor === i ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+            backgroundColor: selectedFloor === i ? 'var(--blueprint)' : 'white',
+            color: selectedFloor === i ? 'white' : 'var(--steel)',
+            cursor: 'pointer', fontFamily: 'var(--font-body)',
+          }}>
+            {i === 0 ? 'Ground Floor' : i === 1 ? 'First Floor' : i === 2 ? 'Second Floor' : 'Terrace'}
+          </button>
+        ))}
+      </div>
+      <CADEditor
+        plan={plan}
+        onPlanChange={(updatedPlan) => {
+          const newPlans = plans.map((p, i) => i === selectedFloor ? updatedPlan : p);
+          onPlansChange(newPlans);
+        }}
+      />
+    </div>
+  );
+}
+
+function ThreeDViewTab({ project, editedPlans, layoutOptions, selectedLayoutId }: {
+  project: Project;
+  editedPlans: FloorPlan[] | null;
+  layoutOptions: LayoutOption[] | null;
+  selectedLayoutId: 'option-a' | 'option-b' | 'option-c';
+}) {
+  const [viewType, setViewType] = useState<'exterior' | 'interior'>('exterior');
+  const req = project.requirements;
+  const plotSettings: PlotSettings = project.plotSettings || {
+    width: req.plotWidth, depth: req.plotDepth, location: req.location,
+    floors: req.floors, style: 'modern', budgetLakhs: req.budget,
+    bedrooms: req.bhk, kitchenStyle: 'large', balconyRequired: true,
+  };
+  const selectedRooms = layoutOptions?.find(l => l.id === selectedLayoutId)?.rooms;
+  const legacyPlans = editedPlans || project.floorPlans || [];
+
+  return (
+    <div>
+      <SectionTitle>3D View</SectionTitle>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
+        <button onClick={() => setViewType('exterior')} style={{
+          padding: '8px 20px', borderRadius: 4, fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
+          border: `1.5px solid ${viewType === 'exterior' ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+          backgroundColor: viewType === 'exterior' ? 'var(--blueprint)' : 'white',
+          color: viewType === 'exterior' ? 'white' : 'var(--steel)',
+        }}>Exterior + Walkthrough</button>
+        <button onClick={() => setViewType('interior')} style={{
+          padding: '8px 20px', borderRadius: 4, fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
+          border: `1.5px solid ${viewType === 'interior' ? 'var(--amber)' : 'var(--line-strong)'}`,
+          backgroundColor: viewType === 'interior' ? 'var(--amber)' : 'white',
+          color: viewType === 'interior' ? 'white' : 'var(--steel)',
+        }}>Interior 3D View</button>
+      </div>
+
+      {viewType === 'exterior' && selectedRooms ? (
+        <div style={{ height: 600, border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden' }}>
+          <ThreeDViewerV2 rooms={selectedRooms} settings={plotSettings} />
+        </div>
+      ) : viewType === 'exterior' && legacyPlans.length > 0 ? (
+        <ThreeDViewer floorPlans={legacyPlans} />
+      ) : null}
+
+      {viewType === 'interior' && selectedRooms ? (
+        <InteriorRenderView rooms={selectedRooms} settings={plotSettings} />
+      ) : null}
+    </div>
+  );
+}
+
+function ElevationsTab({ project }: { project: Project }) {
+  return (
+    <div>
+      <SectionTitle>Building Elevations</SectionTitle>
+      <div style={{
+        padding: '12px 16px', marginBottom: 24,
+        backgroundColor: '#fff7ed', borderRadius: 6,
+        fontSize: 13, color: '#92400e',
+        border: '1px solid #fed7aa',
+      }}>
+        AI-generated concept elevations for reference. Exact dimensions may vary based on structural requirements.
+      </div>
+      <ElevationRenderer req={project.requirements} />
+    </div>
+  );
+}
+
+function InteriorTab({ project, interiorData, editedPlans, onPlansChange }: {
+  project: Project;
+  interiorData: { concepts: unknown[] } | null;
+  editedPlans: FloorPlan[] | null;
+  onPlansChange: (plans: FloorPlan[]) => void;
+}) {
+  const req = project.requirements;
+  const roomImages: Record<string, string> = {
+    'Living Room': '🛋',
+    'Master Bedroom': '🛏',
+    'Kitchen': '🍳',
+    'Dining': '🪑',
+    'Master Bathroom': '🚿',
+    'Balcony': '🌿',
+  };
+
+  const fallbackConcepts = [
+    { room: 'Living Room', concept: `A ${req.style} living room with open layout, feature wall, and curated lighting. Large windows bring in natural light creating a warm, welcoming atmosphere.`, materials: ['Italian Marble Flooring', 'Textured Gypsum Wall', 'Wooden Ceiling Panels'], colorPalette: ['#F5F0E8', '#3D5A80', '#E8C99A'], furniturePlan: 'L-shaped sofa facing entertainment unit, center rug, accent chairs', lightingConcept: 'Recessed ceiling lights with warm tone LED strips and statement pendant' },
+    { room: 'Master Bedroom', concept: `Serene master bedroom with ${req.style} aesthetics, built-in wardrobes, and a dedicated study nook. Designed for maximum comfort and functionality.`, materials: ['Engineered Wood Flooring', 'Fabric Wallpaper', 'Glass Wardrobe'], colorPalette: ['#EDE8E0', '#7B6D8D', '#C4A882'], furniturePlan: 'King bed centered, wardrobes flanking, study desk in corner', lightingConcept: 'Cove lighting with bedside pendants and task lamp at study' },
+    { room: 'Kitchen', concept: `Modern ${req.style} kitchen with island counter, modular cabinets, and premium appliances. The work triangle ensures ergonomic workflow.`, materials: ['Quartz Countertop', 'Lacquered MDF Cabinets', 'Anti-skid Ceramic Tiles'], colorPalette: ['#FFFFFF', '#2C3E50', '#E8A855'], furniturePlan: 'L-shape layout with island, upper and lower cabinets, appliance niche', lightingConcept: 'Under-cabinet LED strips, pendant over island, bright task lighting' },
+    { room: 'Master Bathroom', concept: `Spa-inspired master bathroom with separate shower enclosure, soaking tub, and double vanity unit for a luxury experience.`, materials: ['Large Format Tiles', 'Tempered Glass', 'Teak Wood Accents'], colorPalette: ['#F0ECE8', '#7A8A9A', '#B8A898'], furniturePlan: 'Double vanity with mirrors, separate shower and tub zones', lightingConcept: 'Backlit mirrors, waterproof LED strips in shower, warm ambient' },
+  ];
+
+  const concepts = interiorData?.concepts || fallbackConcepts;
+
+  return (
+    <div>
+      <SectionTitle>Interior Design Concepts</SectionTitle>
+      <p style={{ color: 'var(--steel)', marginBottom: 32, fontWeight: 300 }}>
+        AI-generated interior concepts for {req.style.charAt(0).toUpperCase() + req.style.slice(1)} style, ₹{req.budget}L budget, {req.location}.
+      </p>
+
+      {/* Products Catalog */}
+      {(editedPlans || project.floorPlans) && (
+        <div style={{ marginBottom: 40 }}>
+          <h3 style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 400, marginBottom: 6, color: 'var(--ink)' }}>
+            Furniture &amp; Fixture Placement
+          </h3>
+          <p style={{ fontSize: 13, color: 'var(--steel)', marginBottom: 20 }}>
+            Browse the catalog and place furniture onto your floor plan. Drag from catalog or click +.
+          </p>
+          <InteriorProductsCatalog
+            floorPlans={editedPlans || project.floorPlans || []}
+            onPlansChange={onPlansChange}
+            activeFloor={0}
+          />
+        </div>
+      )}
+
+      <h3 style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 400, marginBottom: 20, color: 'var(--ink)' }}>
+        AI Interior Design Concepts
+      </h3>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {(concepts as Array<{room: string; concept: string; materials: string[]; colorPalette: string[]; furniturePlan?: string; lightingConcept?: string}>).map((c, i) => (
+          <div key={i} style={{ border: '1px solid var(--line)', borderRadius: 8, backgroundColor: 'white', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', gap: 0 }}>
+              {/* Room preview mockup */}
+              <div style={{
+                width: 200, flexShrink: 0,
+                backgroundColor: 'var(--paper)',
+                display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center',
+                padding: 24,
+                borderRight: '1px solid var(--line)',
+              }}>
+                <div style={{ fontSize: 48, marginBottom: 8 }}>{roomImages[c.room] || '🏠'}</div>
+                <div style={{ fontSize: 13, fontWeight: 500, textAlign: 'center', color: 'var(--blueprint)' }}>{c.room}</div>
+                {/* Color palette */}
+                <div style={{ display: 'flex', gap: 4, marginTop: 12 }}>
+                  {c.colorPalette?.map((color, ci) => (
+                    <div key={ci} style={{
+                      width: 24, height: 24, borderRadius: '50%',
+                      backgroundColor: color,
+                      border: '2px solid white',
+                      boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
+                    }}/>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ flex: 1, padding: '24px 28px' }}>
+                <p style={{ fontSize: 15, lineHeight: 1.75, color: 'var(--ink)', marginBottom: 20, fontWeight: 300 }}>{c.concept}</p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Materials</div>
+                    {c.materials?.map((m, mi) => (
+                      <div key={mi} style={{ fontSize: 12, color: 'var(--ink)', padding: '3px 0', display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <span style={{ color: 'var(--amber)', fontSize: 8 }}>●</span> {m}
+                      </div>
+                    ))}
+                  </div>
+                  {c.furniturePlan && (
+                    <div>
+                      <div style={{ fontSize: 10, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Furniture</div>
+                      <p style={{ fontSize: 12, color: 'var(--ink)', lineHeight: 1.6 }}>{c.furniturePlan}</p>
+                    </div>
+                  )}
+                  {c.lightingConcept && (
+                    <div>
+                      <div style={{ fontSize: 10, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Lighting</div>
+                      <p style={{ fontSize: 12, color: 'var(--ink)', lineHeight: 1.6 }}>{c.lightingConcept}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InteriorThreeDView({ rooms, settings }: { rooms: import('@/types').RoomLayout[]; settings: PlotSettings }) {
+  return (
+    <div style={{ height: 600, border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden', position: 'relative' }}>
+      <ThreeDViewerV2 rooms={rooms} settings={settings} />
+      <div style={{
+        position: 'absolute', top: 12, left: 12, zIndex: 10,
+        backgroundColor: 'rgba(26,39,68,0.85)', color: 'white',
+        padding: '8px 14px', borderRadius: 6, fontSize: 11,
+        fontFamily: 'var(--font-mono)', letterSpacing: '0.05em',
+      }}>
+        ✦ INTERIOR 3D VIEW — Use WASD in Walkthrough mode to explore
+      </div>
+    </div>
+  );
+}
+
+function EngineeringTab({ project, layoutOptions, selectedLayoutId, type }: {
+  project: Project;
+  layoutOptions: LayoutOption[] | null;
+  selectedLayoutId: 'option-a' | 'option-b' | 'option-c';
+  type: 'electrical' | 'plumbing' | 'structural';
+}) {
+  const [activeFloor, setActiveFloor] = useState<'ground' | 'first' | 'terrace'>('ground');
+  const req = project.requirements;
+  const plotSettings: PlotSettings = project.plotSettings || {
+    width: req.plotWidth, depth: req.plotDepth, location: req.location,
+    floors: req.floors, style: 'modern', budgetLakhs: req.budget,
+    bedrooms: req.bhk, kitchenStyle: 'large', balconyRequired: true,
+  };
+
+  const tabMap: Record<typeof type, 'electrical' | 'plumbing' | 'structural'> = {
+    electrical: 'electrical', plumbing: 'plumbing', structural: 'structural',
+  };
+  const titles = { electrical: 'Electrical Plan', plumbing: 'Plumbing Plan', structural: 'Structural Plan' };
+
+  const selectedRooms = layoutOptions?.find(l => l.id === selectedLayoutId)?.rooms;
+
+  // Fall back to legacy renderer if no Vastu rooms
+  if (!selectedRooms || selectedRooms.length === 0) {
+    const plans = project.floorPlans || [];
+    const floorIdx = activeFloor === 'ground' ? 0 : activeFloor === 'first' ? 1 : 2;
+    const plan = plans[floorIdx];
+    return (
+      <div>
+        <SectionTitle>{titles[type]}</SectionTitle>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+          {plans.map((_, i) => (
+            <button key={i} onClick={() => setActiveFloor(i === 0 ? 'ground' : i === 1 ? 'first' : 'terrace')} style={{
+              padding: '8px 20px', borderRadius: 4, fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
+              border: `1.5px solid ${floorIdx === i ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+              backgroundColor: floorIdx === i ? 'var(--blueprint)' : 'white',
+              color: floorIdx === i ? 'white' : 'var(--steel)',
+            }}>
+              {i === 0 ? 'Ground Floor' : i === 1 ? 'First Floor' : 'Second Floor'}
+            </button>
+          ))}
+        </div>
+        {plan && <MEPRenderer plan={plan} type={type} />}
+      </div>
+    );
+  }
+
+  const floorNum = activeFloor === 'ground' ? 0 : activeFloor === 'first' ? 1 : 2;
+  const floorRooms = selectedRooms.filter(r => r.floor === floorNum);
+
+  const floorTabs: ('ground' | 'first' | 'terrace')[] = ['ground'];
+  if (req.floors >= 2) floorTabs.push('first');
+  if (req.floors >= 3) floorTabs.push('terrace');
+
+  return (
+    <div style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, flexShrink: 0 }}>
+        <SectionTitle>{titles[type]}</SectionTitle>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {floorTabs.map(f => (
+            <button key={f} onClick={() => setActiveFloor(f)} style={{
+              padding: '6px 14px', borderRadius: 4, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+              border: `1.5px solid ${activeFloor === f ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+              backgroundColor: activeFloor === f ? 'var(--blueprint)' : 'white',
+              color: activeFloor === f ? 'white' : 'var(--steel)',
+            }}>
+              {f === 'ground' ? 'Ground Floor' : f === 'first' ? 'First Floor' : 'Second Floor'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{ flex: 1, overflow: 'hidden', borderRadius: 8, border: '1px solid var(--line)' }}>
+        <DrawingViewport
+          rooms={floorRooms}
+          settings={plotSettings}
+          selectedRoomId={null}
+          onSelectRoom={() => {}}
+          onUpdateRoom={() => {}}
+          activeTab={tabMap[type]}
+          elevationSide="front"
+          sectionType="cross"
+          siteSvg="" roofSvg="" elevationSvg="" sectionSvg=""
+        />
+      </div>
+    </div>
+  );
+}
+
+function MEPTab({ project, type }: { project: Project; type: 'electrical' | 'plumbing' | 'structural' }) {
+  const [selectedFloor, setSelectedFloor] = useState(0);
+  const plan = project.floorPlans?.[selectedFloor];
+  const titles = { electrical: 'Electrical Draft', plumbing: 'Plumbing Draft', structural: 'Structural Draft' };
+  return (
+    <div>
+      <SectionTitle>{titles[type]}</SectionTitle>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+        {project.floorPlans?.map((_, i) => (
+          <button key={i} onClick={() => setSelectedFloor(i)} style={{
+            padding: '8px 20px', borderRadius: 4,
+            border: `1.5px solid ${selectedFloor === i ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+            backgroundColor: selectedFloor === i ? 'var(--blueprint)' : 'white',
+            color: selectedFloor === i ? 'white' : 'var(--steel)',
+            fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
+          }}>
+            {i === 0 ? 'Ground Floor' : i === 1 ? 'First Floor' : i === 2 ? 'Second Floor' : 'Terrace'}
+          </button>
+        ))}
+      </div>
+      {plan && <MEPRenderer plan={plan} type={type} />}
+    </div>
+  );
+}
+
+function CostTab({ project }: { project: Project }) {
+  const cost = project.costEstimate;
+  if (!cost) return null;
+
+  return (
+    <div>
+      <SectionTitle>Cost Estimation</SectionTitle>
+      <p style={{ color: 'var(--steel)', marginBottom: 32, fontWeight: 300 }}>
+        Based on {cost.builtUp?.toLocaleString()} sq.ft built-up area in {project.requirements.location}. Rates vary by material grade and market conditions.
+      </p>
+
+      {/* Three tier cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 40 }}>
+        {[
+          { tier: 'Economy', value: cost.economy, color: '#16a34a', bg: '#f0fdf4', desc: 'Standard materials, functional finishes', rate: `₹${Math.round(cost.economy * 100000 / (cost.builtUp || 1)).toLocaleString()}/sq.ft` },
+          { tier: 'Standard', value: cost.standard, color: 'var(--blueprint)', bg: 'rgba(26,39,68,0.04)', desc: 'Good quality materials, elegant finishes', rate: `₹${Math.round(cost.standard * 100000 / (cost.builtUp || 1)).toLocaleString()}/sq.ft`, recommended: true },
+          { tier: 'Premium', value: cost.premium, color: 'var(--amber)', bg: '#fff7ed', desc: 'Premium materials, luxury finishes', rate: `₹${Math.round(cost.premium * 100000 / (cost.builtUp || 1)).toLocaleString()}/sq.ft` },
+        ].map((t, i) => (
+          <div key={i} style={{
+            border: `2px solid ${t.recommended ? t.color : 'var(--line)'}`,
+            borderRadius: 8, padding: '28px 24px',
+            backgroundColor: t.bg, position: 'relative',
+          }}>
+            {t.recommended && (
+              <div style={{
+                position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+                backgroundColor: 'var(--blueprint)', color: 'white',
+                padding: '3px 12px', borderRadius: 100, fontSize: 10, fontWeight: 500,
+              }}>RECOMMENDED</div>
+            )}
+            <div style={{ fontSize: 13, color: 'var(--steel)', marginBottom: 8 }}>{t.tier}</div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 48, fontWeight: 600, color: t.color, lineHeight: 1 }}>₹{t.value}L</div>
+            <div style={{ fontSize: 12, color: 'var(--steel)', margin: '8px 0 12px', fontFamily: 'var(--font-mono)' }}>{t.rate}</div>
+            <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.5 }}>{t.desc}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Breakdown chart */}
+      <div style={{ border: '1px solid var(--line)', borderRadius: 8, backgroundColor: 'white', padding: '28px' }}>
+        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 24, color: 'var(--blueprint)' }}>Cost Breakdown (Standard)</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 48px' }}>
+          {Object.entries(cost.breakdown).map(([key, value]) => {
+            const pct = Math.round((value / cost.standard) * 100);
+            return (
+              <div key={key}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: 13, textTransform: 'capitalize', color: 'var(--ink)' }}>{key}</span>
+                  <span style={{ fontSize: 13, color: 'var(--steel)' }}>₹{value}L ({pct}%)</span>
+                </div>
+                <div style={{ height: 6, backgroundColor: 'var(--paper-dark)', borderRadius: 3 }}>
+                  <div style={{
+                    height: '100%', borderRadius: 3,
+                    backgroundColor: 'var(--blueprint-light)',
+                    width: `${pct}%`,
+                    opacity: 0.8,
+                  }}/>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ marginTop: 24, padding: '16px', backgroundColor: 'var(--paper)', borderRadius: 6, fontSize: 12, color: 'var(--steel)', lineHeight: 1.7 }}>
+          💡 <strong>Note:</strong> Rates are indicative for {project.requirements.location}. Final costs depend on contractor, material selection, current market rates, and site conditions. Recommend getting 3 contractor quotes.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BOQTab({ project }: { project: Project }) {
+  const [tier, setTier] = useState<'economy' | 'standard' | 'premium'>('standard');
+  const boq = project.boq || [];
+
+  const rateKey = tier === 'economy' ? 'rateEconomy' : tier === 'premium' ? 'ratePremium' : 'rateStandard';
+  const total = boq.reduce((s, item) => s + item.quantity * item[rateKey], 0);
+
+  return (
+    <div>
+      <SectionTitle>Bill of Quantities</SectionTitle>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
+        {(['economy', 'standard', 'premium'] as const).map(t => (
+          <button key={t} onClick={() => setTier(t)} style={{
+            padding: '8px 20px', borderRadius: 4,
+            border: `1.5px solid ${tier === t ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+            backgroundColor: tier === t ? 'var(--blueprint)' : 'white',
+            color: tier === t ? 'white' : 'var(--steel)',
+            fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
+            textTransform: 'capitalize',
+          }}>{t}</button>
+        ))}
+      </div>
+
+      <div style={{ border: '1px solid var(--line)', borderRadius: 6, overflow: 'hidden', backgroundColor: 'white' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ backgroundColor: 'var(--blueprint)', color: 'white' }}>
+              <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>#</th>
+              <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>Material</th>
+              <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>Unit</th>
+              <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>Quantity</th>
+              <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>Rate (₹)</th>
+              <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>Amount (₹)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {boq.map((item, i) => {
+              const rate = item[rateKey];
+              const amount = item.quantity * rate;
+              return (
+                <tr key={i} style={{ backgroundColor: i % 2 === 0 ? 'white' : '#fafaf9', borderBottom: '1px solid var(--line)' }}>
+                  <td style={{ padding: '10px 16px', color: 'var(--steel)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{i + 1}</td>
+                  <td style={{ padding: '10px 16px', fontWeight: 400 }}>{item.material}</td>
+                  <td style={{ padding: '10px 16px', textAlign: 'right', color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>{item.unit}</td>
+                  <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{item.quantity.toLocaleString()}</td>
+                  <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{rate.toLocaleString()}</td>
+                  <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>₹{amount.toLocaleString()}</td>
+                </tr>
+              );
+            })}
+            <tr style={{ backgroundColor: 'rgba(26,39,68,0.04)', borderTop: '2px solid var(--blueprint)' }}>
+              <td colSpan={5} style={{ padding: '14px 16px', fontWeight: 600, color: 'var(--blueprint)' }}>Total ({tier.charAt(0).toUpperCase() + tier.slice(1)})</td>
+              <td style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-display)', fontSize: 18, color: 'var(--blueprint)' }}>
+                ₹{(total / 100000).toFixed(1)}L
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 16, fontSize: 12, color: 'var(--steel)', lineHeight: 1.7 }}>
+        * Quantities are approximate estimates based on thumb rules. Actual quantities require detailed drawings and site measurements. Labour costs are not included.
+      </div>
+    </div>
+  );
+}
+
+function TimelineTab({ project }: { project: Project }) {
+  const timeline = project.timeline || [];
+  const maxWeek = Math.max(...timeline.map(t => t.endWeek));
+
+  return (
+    <div>
+      <SectionTitle>Construction Timeline</SectionTitle>
+      <p style={{ color: 'var(--steel)', marginBottom: 8, fontWeight: 300 }}>Estimated duration: {maxWeek} weeks ({Math.ceil(maxWeek / 4)} months)</p>
+      <div style={{
+        display: 'inline-block', padding: '4px 12px', borderRadius: 100,
+        backgroundColor: '#fff7ed', color: '#92400e',
+        fontSize: 11, marginBottom: 32,
+        border: '1px solid #fed7aa',
+      }}>
+        ⚠ Timeline is indicative. Actual schedule depends on contractor, weather, material availability, and approvals.
+      </div>
+
+      {/* Gantt-like view */}
+      <div style={{ border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden', backgroundColor: 'white' }}>
+        {timeline.map((phase, i) => {
+          const startPct = ((phase.startWeek - 1) / maxWeek) * 100;
+          const widthPct = ((phase.endWeek - phase.startWeek + 1) / maxWeek) * 100;
+
+          return (
+            <div key={i} style={{
+              display: 'flex', gap: 0,
+              borderBottom: i < timeline.length - 1 ? '1px solid var(--line)' : 'none',
+            }}>
+              {/* Phase name */}
+              <div style={{
+                width: 220, flexShrink: 0,
+                padding: '16px 20px',
+                borderRight: '1px solid var(--line)',
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 2 }}>{phase.phase}</div>
+                <div style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>Week {phase.startWeek}–{phase.endWeek} · {phase.duration}</div>
+              </div>
+
+              {/* Gantt bar area */}
+              <div style={{ flex: 1, padding: '20px 12px', position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <div style={{ width: '100%', height: 28, backgroundColor: 'var(--paper)', borderRadius: 4, position: 'relative' }}>
+                  <div style={{
+                    position: 'absolute',
+                    left: `${startPct}%`,
+                    width: `${widthPct}%`,
+                    height: '100%',
+                    backgroundColor: i % 3 === 0 ? 'var(--blueprint)' : i % 3 === 1 ? 'var(--blueprint-mid)' : 'var(--blueprint-light)',
+                    borderRadius: 4,
+                    opacity: 0.8,
+                    display: 'flex', alignItems: 'center', paddingLeft: 8,
+                  }}>
+                    {widthPct > 10 && (
+                      <span style={{ fontSize: 9, color: 'white', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)', letterSpacing: '0.05em' }}>
+                        {phase.duration}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Tasks */}
+              <div style={{ width: 220, flexShrink: 0, padding: '12px 16px', borderLeft: '1px solid var(--line)' }}>
+                {phase.tasks.slice(0, 3).map((task, ti) => (
+                  <div key={ti} style={{ fontSize: 11, color: 'var(--steel)', padding: '2px 0', display: 'flex', gap: 6 }}>
+                    <span style={{ color: 'var(--blueprint-light)', fontSize: 8, marginTop: 2 }}>●</span>
+                    {task}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ComplianceTab({ project, complianceData }: { project: Project; complianceData: Record<string, unknown> | null }) {
+  const req = project.requirements;
+
+  const fallback = {
+    setbacks: { front: '10 ft', rear: '5 ft', leftSide: '3 ft', rightSide: '3 ft' },
+    fsi: { permissible: '1.8', proposed: `${((req.floors * req.plotWidth * req.plotDepth) / (req.plotWidth * req.plotDepth)).toFixed(1)}`, status: 'within limits' },
+    height: { permissible: req.floors <= 2 ? '10m' : '15m', proposed: `${req.floors * 3}m` },
+    parking: 'Minimum 1 car park per unit (as per local norms)',
+    approvalChecklist: [
+      'Building Plan Approval from local authority',
+      'No-objection certificate from Fire Department (if >15m height)',
+      'Environmental clearance (if plot >20,000 sq.m)',
+      'Structural stability certificate from licensed engineer',
+      'Electrical connection approval from DISCOM',
+      'Water connection approval from municipal body',
+      'Commencement Certificate before starting work',
+      'Completion Certificate after construction',
+    ],
+    warningNotes: [
+      'Setback requirements vary by zone — verify with local municipality',
+      'FSI calculations must be confirmed with approved drawings',
+      'Special permissions may be needed for corner plots',
+    ],
+  };
+
+  const data = (complianceData as typeof fallback) || fallback;
+
+  return (
+    <div>
+      <SectionTitle>Compliance & Approvals</SectionTitle>
+
+      <div style={{
+        padding: '16px 20px', marginBottom: 32,
+        backgroundColor: '#fef3c7', borderRadius: 6,
+        fontSize: 13, color: '#92400e', lineHeight: 1.7,
+        border: '1px solid #fde68a',
+      }}>
+        ⚠ <strong>These are estimated assumptions based on typical regulations for {req.location}.</strong> Always verify setbacks, FSI, height restrictions, and approval requirements with your local Municipal Corporation before design finalization.
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+        {/* Setbacks */}
+        <div style={{ border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white', padding: '20px 24px' }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--blueprint)' }}>Setback Requirements</h3>
+          {Object.entries(data.setbacks || {}).map(([dir, val]) => (
+            <div key={dir} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+              <span style={{ fontSize: 13, textTransform: 'capitalize', color: 'var(--ink)' }}>{dir.replace(/([A-Z])/g, ' $1').trim()}</span>
+              <span style={{ fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-mono)', color: 'var(--blueprint)' }}>{String(val)}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* FSI & Height */}
+        <div style={{ border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white', padding: '20px 24px' }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--blueprint)' }}>FSI & Height</h3>
+          {data.fsi && (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+                <span style={{ fontSize: 13, color: 'var(--ink)' }}>Permissible FSI</span>
+                <span style={{ fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-mono)' }}>{String(data.fsi.permissible || '')}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+                <span style={{ fontSize: 13, color: 'var(--ink)' }}>Proposed FSI</span>
+                <span style={{ fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-mono)' }}>{String(data.fsi.proposed || '')}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+                <span style={{ fontSize: 13, color: 'var(--ink)' }}>Status</span>
+                <span style={{ fontSize: 12, padding: '2px 10px', borderRadius: 100, backgroundColor: '#f0fdf4', color: '#16a34a', fontWeight: 500 }}>
+                  {String(data.fsi.status || '')}
+                </span>
+              </div>
+            </>
+          )}
+          {data.height && (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+                <span style={{ fontSize: 13, color: 'var(--ink)' }}>Permissible Height</span>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>{String((data.height as Record<string, string>).permissible || '')}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
+                <span style={{ fontSize: 13, color: 'var(--ink)' }}>Proposed Height</span>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>{String((data.height as Record<string, string>).proposed || '')}</span>
+              </div>
+            </>
+          )}
+          <div style={{ marginTop: 12, padding: '10px', backgroundColor: 'var(--paper)', borderRadius: 4, fontSize: 12, color: 'var(--steel)' }}>
+            Parking: {String(data.parking || '')}
+          </div>
+        </div>
+      </div>
+
+      {/* Approval Checklist */}
+      <div style={{ border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white', padding: '24px', marginBottom: 20 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--blueprint)' }}>Approval Checklist</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {(data.approvalChecklist || []).map((item, i) => (
+            <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--line)', alignItems: 'flex-start' }}>
+              <div style={{
+                width: 18, height: 18, borderRadius: 3, flexShrink: 0,
+                border: '1.5px solid var(--blueprint-light)',
+                backgroundColor: 'rgba(74,114,196,0.06)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <span style={{ fontSize: 10, color: 'var(--blueprint)' }}>□</span>
+              </div>
+              <span style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.5 }}>{String(item)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Warnings */}
+      {(data.warningNotes || []).length > 0 && (
+        <div style={{ border: '1px solid #fed7aa', borderRadius: 6, backgroundColor: '#fff7ed', padding: '20px 24px' }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: '#92400e' }}>Important Notes</h3>
+          {(data.warningNotes || []).map((note, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+              <span style={{ color: '#c8853a', fontSize: 12, marginTop: 2 }}>⚠</span>
+              <span style={{ fontSize: 13, color: '#78350f', lineHeight: 1.6 }}>{String(note)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExportTab({ project }: { project: Project }) {
+  const handlePrint = () => window.print();
+
+  const handleDownloadJSON = () => {
+    const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${project.name.replace(/\s+/g, '_')}_data.json`;
+    a.click();
+  };
+
+  return (
+    <div>
+      <SectionTitle>Export Package</SectionTitle>
+      <p style={{ color: 'var(--steel)', marginBottom: 40, fontWeight: 300 }}>
+        Export your architectural design package in various formats for sharing and professional review.
+      </p>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+        {[
+          { title: 'Complete Report (PDF)', desc: 'All drawings, estimates, BOQ, and compliance in one document', icon: '📄', action: handlePrint, label: 'Generate PDF' },
+          { title: 'Project Data (JSON)', desc: 'Full project data for import into other tools or sharing', icon: '{ }', action: handleDownloadJSON, label: 'Download JSON' },
+          { title: 'Floor Plan (SVG)', desc: 'Scalable vector drawings for CAD tools', icon: '⊞', action: () => alert('SVG export: In next version'), label: 'Export SVG' },
+          { title: 'Cost Report (CSV)', desc: 'BOQ and cost estimates in spreadsheet format', icon: '≡', action: () => alert('CSV export: In next version'), label: 'Export CSV' },
+          { title: 'Share Link', desc: 'Generate a read-only link to share with clients', icon: '↗', action: () => { navigator.clipboard.writeText(window.location.href); alert('Link copied!'); }, label: 'Copy Link' },
+          { title: 'DXF Drawing', desc: 'AutoCAD-compatible drawing file (Pro feature)', icon: '◱', action: () => alert('DXF export: Professional version'), label: 'Export DXF' },
+        ].map((item, i) => (
+          <div key={i} style={{
+            border: '1px solid var(--line)', borderRadius: 8,
+            backgroundColor: 'white', padding: '24px',
+            display: 'flex', flexDirection: 'column',
+          }}>
+            <div style={{ fontSize: 28, marginBottom: 12 }}>{item.icon}</div>
+            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8, color: 'var(--ink)' }}>{item.title}</div>
+            <div style={{ fontSize: 13, color: 'var(--steel)', lineHeight: 1.6, flex: 1, marginBottom: 16 }}>{item.desc}</div>
+            <button onClick={item.action} style={{
+              padding: '10px 0', borderRadius: 4,
+              border: '1.5px solid var(--blueprint)',
+              backgroundColor: 'white', color: 'var(--blueprint)',
+              fontSize: 13, fontWeight: 500, cursor: 'pointer',
+              fontFamily: 'var(--font-body)',
+              transition: 'all 0.15s',
+            }}
+              onMouseEnter={e => { (e.currentTarget).style.backgroundColor = 'var(--blueprint)'; (e.currentTarget).style.color = 'white'; }}
+              onMouseLeave={e => { (e.currentTarget).style.backgroundColor = 'white'; (e.currentTarget).style.color = 'var(--blueprint)'; }}
+            >
+              {item.label}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 40, padding: '20px 24px', border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white' }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: 'var(--blueprint)' }}>Legal Disclaimer</h3>
+        <p style={{ fontSize: 13, color: 'var(--steel)', lineHeight: 1.8 }}>
+          All drawings and documents in this package are AI-generated preliminary concepts for architectural review only.
+          <strong> Structural calculations, electrical layouts, plumbing designs, HVAC plans, fire safety compliance, and municipality submission must be reviewed and stamped by licensed professionals.</strong> Do not use for construction without proper professional approval and municipal clearances.
+        </p>
+      </div>
+    </div>
+  );
+}

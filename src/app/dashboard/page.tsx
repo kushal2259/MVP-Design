@@ -1,0 +1,221 @@
+'use client';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { getProjects, deleteProject } from '@/lib/store';
+import type { Project } from '@/types';
+
+function StatusBadge({ status }: { status: Project['status'] }) {
+  const cfg: Record<string, { bg: string; color: string; label: string }> = {
+    requirements: { bg: '#f5f3ee', color: '#7a8a9a', label: 'Draft' },
+    analyzing: { bg: '#fff7ed', color: '#c8853a', label: 'Analyzing' },
+    planning: { bg: '#eff6ff', color: '#3b6bd6', label: 'Planning' },
+    generated: { bg: '#f0fdf4', color: '#16a34a', label: 'Generated' },
+    reviewing: { bg: '#fdf4ff', color: '#9333ea', label: 'In Review' },
+  };
+  const c = cfg[status] || cfg.requirements;
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '3px 10px', borderRadius: 100,
+      backgroundColor: c.bg, color: c.color,
+      fontSize: 11, fontWeight: 500, letterSpacing: '0.04em',
+    }}>{c.label}</span>
+  );
+}
+
+export default function DashboardPage() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setProjects(getProjects());
+    setMounted(true);
+  }, []);
+
+  const handleDelete = (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (confirm('Delete this project?')) {
+      deleteProject(id);
+      setProjects(getProjects());
+    }
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', backgroundColor: 'var(--paper)', fontFamily: 'var(--font-body)' }}>
+      {/* Header */}
+      <div style={{
+        borderBottom: '1px solid var(--line)',
+        padding: '0 48px',
+        height: 64,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        backgroundColor: 'var(--paper)',
+        position: 'sticky', top: 0, zIndex: 50,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+          <Link href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <svg width="24" height="24" viewBox="0 0 28 28" fill="none">
+              <rect x="2" y="2" width="24" height="24" rx="2" stroke="var(--blueprint)" strokeWidth="1.5"/>
+              <path d="M7 21L21 7M7 7h14M7 7v14" stroke="var(--amber)" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            <span style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--ink)' }}>ArchCopilot</span>
+          </Link>
+          <span style={{ color: 'var(--line-strong)', fontSize: 18 }}>|</span>
+          <span style={{ fontSize: 14, color: 'var(--steel)', fontWeight: 300 }}>My Projects</span>
+        </div>
+        <Link href="/project/new" style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          padding: '8px 20px', borderRadius: 4,
+          backgroundColor: 'var(--blueprint)', color: 'white',
+          textDecoration: 'none', fontSize: 14, fontWeight: 500,
+        }}>
+          + New Project
+        </Link>
+      </div>
+
+      <div style={{ padding: '48px', maxWidth: 1200, margin: '0 auto' }}>
+        {/* Summary bar */}
+        <div style={{ display: 'flex', gap: 24, marginBottom: 48 }}>
+          {[
+            { label: 'Total Projects', value: projects.length },
+            { label: 'Generated', value: projects.filter(p => p.status === 'generated' || p.status === 'reviewing').length },
+            { label: 'In Progress', value: projects.filter(p => p.status === 'analyzing' || p.status === 'planning').length },
+            { label: 'Drafts', value: projects.filter(p => p.status === 'requirements').length },
+          ].map((s, i) => (
+            <div key={i} style={{
+              flex: 1, padding: '24px', borderRadius: 6,
+              border: '1px solid var(--line)',
+              backgroundColor: 'white',
+            }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 36, fontWeight: 600, color: 'var(--blueprint)', lineHeight: 1 }}>{s.value}</div>
+              <div style={{ fontSize: 13, color: 'var(--steel)', marginTop: 8, fontWeight: 300 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Projects grid */}
+        {!mounted ? null : projects.length === 0 ? (
+          <div style={{
+            textAlign: 'center', padding: '120px 40px',
+            border: '2px dashed var(--line-strong)',
+            borderRadius: 8,
+          }}>
+            <svg width="64" height="64" viewBox="0 0 28 28" fill="none" style={{ margin: '0 auto 24px', display: 'block', opacity: 0.3 }}>
+              <rect x="2" y="2" width="24" height="24" rx="2" stroke="var(--blueprint)" strokeWidth="1.5"/>
+              <path d="M7 21L21 7M7 7h14M7 7v14" stroke="var(--amber)" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 300, marginBottom: 16, color: 'var(--ink)' }}>No projects yet</h2>
+            <p style={{ color: 'var(--steel)', marginBottom: 32, fontSize: 16, fontWeight: 300 }}>Create your first architectural project to get started</p>
+            <Link href="/project/new" style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '12px 28px', borderRadius: 4,
+              backgroundColor: 'var(--blueprint)', color: 'white',
+              textDecoration: 'none', fontSize: 15, fontWeight: 500,
+            }}>
+              Create Your First Project →
+            </Link>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 24 }}>
+            {projects.map((project) => (
+              <Link key={project.id} href={`/project/${project.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                <div style={{
+                  border: '1px solid var(--line)',
+                  borderRadius: 6,
+                  overflow: 'hidden',
+                  backgroundColor: 'white',
+                  transition: 'all 0.2s',
+                  cursor: 'pointer',
+                }}
+                  onMouseEnter={e => {
+                    (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)';
+                    (e.currentTarget as HTMLElement).style.boxShadow = '0 8px 32px rgba(0,0,0,0.08)';
+                    (e.currentTarget as HTMLElement).style.borderColor = 'var(--blueprint-light)';
+                  }}
+                  onMouseLeave={e => {
+                    (e.currentTarget as HTMLElement).style.transform = 'none';
+                    (e.currentTarget as HTMLElement).style.boxShadow = 'none';
+                    (e.currentTarget as HTMLElement).style.borderColor = 'var(--line)';
+                  }}
+                >
+                  {/* Mini floor plan preview */}
+                  <div style={{
+                    height: 140,
+                    backgroundColor: 'var(--blueprint)',
+                    position: 'relative',
+                    overflow: 'hidden',
+                  }}
+                    className="blueprint-grid"
+                  >
+                    <svg width="100%" height="100%" viewBox="0 0 280 140" opacity="0.6">
+                      <rect x="30" y="20" width="100" height="70" fill="none" stroke="rgba(74,114,196,0.8)" strokeWidth="1"/>
+                      <rect x="130" y="20" width="70" height="40" fill="none" stroke="rgba(74,114,196,0.8)" strokeWidth="1"/>
+                      <rect x="130" y="60" width="70" height="30" fill="none" stroke="rgba(74,114,196,0.8)" strokeWidth="1"/>
+                      <rect x="30" y="90" width="50" height="30" fill="none" stroke="rgba(74,114,196,0.8)" strokeWidth="1"/>
+                      <rect x="80" y="90" width="50" height="30" fill="none" stroke="rgba(74,114,196,0.8)" strokeWidth="1"/>
+                      <rect x="200" y="20" width="50" height="70" fill="none" stroke="rgba(74,114,196,0.8)" strokeWidth="1"/>
+                      <line x1="30" y1="10" x2="30" y2="130" stroke="rgba(200,133,58,0.5)" strokeWidth="0.5"/>
+                      <line x1="250" y1="10" x2="250" y2="130" stroke="rgba(200,133,58,0.5)" strokeWidth="0.5"/>
+                    </svg>
+                    <div style={{
+                      position: 'absolute', bottom: 12, left: 16,
+                      fontFamily: 'var(--font-mono)', fontSize: 9,
+                      color: 'rgba(200,133,58,0.9)', letterSpacing: '0.1em',
+                    }}>
+                      {project.requirements.plotWidth}×{project.requirements.plotDepth} FT · {project.requirements.floors} FLOOR{project.requirements.floors > 1 ? 'S' : ''}
+                    </div>
+                  </div>
+
+                  <div style={{ padding: '20px 24px 24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                      <h3 style={{ fontSize: 16, fontWeight: 500, color: 'var(--ink)', lineHeight: 1.3 }}>{project.name}</h3>
+                      <StatusBadge status={project.status} />
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+                      {[
+                        { label: project.requirements.bhk + ' BHK', icon: '🏠' },
+                        { label: project.requirements.plotSize + ' sq yd', icon: '◱' },
+                        { label: '₹' + project.requirements.budget + 'L', icon: '◎' },
+                      ].map((tag, ti) => (
+                        <span key={ti} style={{
+                          fontSize: 12, color: 'var(--steel)',
+                          display: 'flex', alignItems: 'center', gap: 4,
+                        }}>
+                          <span>{tag.icon}</span> {tag.label}
+                        </span>
+                      ))}
+                    </div>
+
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      paddingTop: 16, borderTop: '1px solid var(--line)',
+                    }}>
+                      <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>
+                        {new Date(project.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </span>
+                      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                        <span style={{ fontSize: 12, color: 'var(--blueprint)', fontWeight: 500 }}>
+                          {project.status === 'generated' || project.status === 'reviewing' ? 'View Design →' : 'Continue →'}
+                        </span>
+                        <button
+                          onClick={e => handleDelete(project.id, e)}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            color: 'var(--steel)', fontSize: 12, padding: '2px 6px',
+                            borderRadius: 4,
+                          }}
+                          title="Delete project"
+                        >✕</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
