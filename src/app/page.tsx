@@ -1,6 +1,8 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { signIn, signUp, resetPassword, getCurrentUser } from '@/lib/store';
 
 const FEATURES = [
   { icon: '⬡', title: 'AI Requirement Analysis', desc: 'Natural language to structured architectural data in seconds' },
@@ -18,12 +20,199 @@ const STATS = [
   { value: '3×', label: 'Faster than manual process' },
 ];
 
-export default function HomePage() {
+type ModalMode = 'signin' | 'signup' | 'forgot' | null;
+
+const inputStyle: React.CSSProperties = {
+  width: '100%', padding: '10px 14px', borderRadius: 6,
+  border: '1.5px solid var(--line-strong)', fontSize: 14,
+  fontFamily: 'var(--font-body)', outline: 'none',
+  backgroundColor: 'var(--paper)', color: 'var(--ink)',
+  boxSizing: 'border-box',
+};
+
+function HomePageInner() {
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const [modal, setModal] = useState<ModalMode>(null);
+  const [user, setUser] = useState<{ name: string } | null>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Sign in form
+  const [siEmail, setSiEmail] = useState('');
+  const [siPass, setSiPass] = useState('');
+  const [siError, setSiError] = useState('');
+
+  // Sign up form
+  const [suName, setSuName] = useState('');
+  const [suEmail, setSuEmail] = useState('');
+  const [suPass, setSuPass] = useState('');
+  const [suPass2, setSuPass2] = useState('');
+  const [suError, setSuError] = useState('');
+
+  // Forgot password form
+  const [fpEmail, setFpEmail] = useState('');
+  const [fpNew, setFpNew] = useState('');
+  const [fpMsg, setFpMsg] = useState('');
+
+  useEffect(() => {
+    setMounted(true);
+    const u = getCurrentUser();
+    if (u) { setUser(u); return; }
+    const auth = searchParams.get('auth');
+    if (auth === 'signin') setModal('signin');
+    else if (auth === 'signup') setModal('signup');
+  }, [searchParams]);
+
+  const openModal = (mode: ModalMode) => {
+    setSiError(''); setSuError(''); setFpMsg('');
+    setModal(mode);
+  };
+
+  const handleSignIn = (e: React.FormEvent) => {
+    e.preventDefault();
+    const res = signIn(siEmail, siPass);
+    if (!res.ok) { setSiError(res.error || 'Error'); return; }
+    const u = getCurrentUser();
+    setUser(u);
+    setModal(null);
+    router.push('/dashboard');
+  };
+
+  const handleSignUp = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (suPass !== suPass2) { setSuError('Passwords do not match'); return; }
+    if (suPass.length < 6) { setSuError('Password must be at least 6 characters'); return; }
+    const res = signUp(suName, suEmail, suPass);
+    if (!res.ok) { setSuError(res.error || 'Error'); return; }
+    const u = getCurrentUser();
+    setUser(u);
+    setModal(null);
+    router.push('/dashboard');
+  };
+
+  const handleForgot = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (fpNew.length < 6) { setFpMsg('Password must be at least 6 characters'); return; }
+    const res = resetPassword(fpEmail, fpNew);
+    if (!res.ok) { setFpMsg(res.error || 'Error'); return; }
+    setFpMsg('✓ Password reset successfully! You can now sign in.');
+  };
 
   return (
     <main style={{ fontFamily: 'var(--font-body)', backgroundColor: 'var(--paper)', color: 'var(--ink)', minHeight: '100vh', overflowX: 'hidden' }}>
+
+      {/* ── Auth Modal ── */}
+      {modal && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, backgroundColor: 'rgba(10,15,28,0.6)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setModal(null)}
+        >
+          <div
+            style={{ backgroundColor: 'var(--paper)', borderRadius: 12, padding: '40px 44px', width: 420, maxWidth: '95vw', border: '1px solid var(--line-strong)', boxShadow: '0 32px 80px rgba(0,0,0,0.2)', position: 'relative' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Close */}
+            <button onClick={() => setModal(null)} style={{ position: 'absolute', top: 16, right: 18, background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--steel)', lineHeight: 1 }}>×</button>
+
+            {/* Logo */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 28 }}>
+              <svg width="24" height="24" viewBox="0 0 28 28" fill="none">
+                <rect x="2" y="2" width="24" height="24" rx="2" stroke="var(--blueprint)" strokeWidth="1.5"/>
+                <path d="M7 21L21 7M7 7h14M7 7v14" stroke="var(--amber)" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              <span style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600 }}>ArchCopilot</span>
+            </div>
+
+            {/* ── Sign In ── */}
+            {modal === 'signin' && (
+              <>
+                <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 400, marginBottom: 6 }}>Welcome back</h2>
+                <p style={{ color: 'var(--steel)', fontSize: 13, marginBottom: 28 }}>Sign in to access your projects</p>
+                <form onSubmit={handleSignIn} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Email</label>
+                    <input type="email" required style={inputStyle} value={siEmail} onChange={e => setSiEmail(e.target.value)} placeholder="you@example.com" />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Password</label>
+                    <input type="password" required style={inputStyle} value={siPass} onChange={e => setSiPass(e.target.value)} placeholder="••••••••" />
+                  </div>
+                  {siError && <p style={{ color: '#dc2626', fontSize: 12, margin: 0 }}>{siError}</p>}
+                  <button type="submit" style={{ padding: '11px', borderRadius: 6, backgroundColor: 'var(--blueprint)', color: 'white', border: 'none', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4 }}>
+                    Sign In →
+                  </button>
+                </form>
+                <div style={{ marginTop: 20, display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                  <button onClick={() => openModal('forgot')} style={{ background: 'none', border: 'none', color: 'var(--blueprint)', cursor: 'pointer', fontSize: 13, padding: 0 }}>Forgot password?</button>
+                  <button onClick={() => openModal('signup')} style={{ background: 'none', border: 'none', color: 'var(--steel)', cursor: 'pointer', fontSize: 13, padding: 0 }}>
+                    No account? <span style={{ color: 'var(--blueprint)', fontWeight: 500 }}>Sign up</span>
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* ── Sign Up ── */}
+            {modal === 'signup' && (
+              <>
+                <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 400, marginBottom: 6 }}>Create account</h2>
+                <p style={{ color: 'var(--steel)', fontSize: 13, marginBottom: 28 }}>Start designing in minutes — no credit card needed</p>
+                <form onSubmit={handleSignUp} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Full Name</label>
+                    <input type="text" required style={inputStyle} value={suName} onChange={e => setSuName(e.target.value)} placeholder="Rahul Sharma" />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Email</label>
+                    <input type="email" required style={inputStyle} value={suEmail} onChange={e => setSuEmail(e.target.value)} placeholder="you@example.com" />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Password</label>
+                    <input type="password" required style={inputStyle} value={suPass} onChange={e => setSuPass(e.target.value)} placeholder="At least 6 characters" />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Confirm Password</label>
+                    <input type="password" required style={inputStyle} value={suPass2} onChange={e => setSuPass2(e.target.value)} placeholder="••••••••" />
+                  </div>
+                  {suError && <p style={{ color: '#dc2626', fontSize: 12, margin: 0 }}>{suError}</p>}
+                  <button type="submit" style={{ padding: '11px', borderRadius: 6, backgroundColor: 'var(--amber)', color: 'white', border: 'none', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4 }}>
+                    Create Account →
+                  </button>
+                </form>
+                <p style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--steel)' }}>
+                  Already have an account?{' '}
+                  <button onClick={() => openModal('signin')} style={{ background: 'none', border: 'none', color: 'var(--blueprint)', cursor: 'pointer', fontSize: 13, fontWeight: 500, padding: 0 }}>Sign in</button>
+                </p>
+              </>
+            )}
+
+            {/* ── Forgot Password ── */}
+            {modal === 'forgot' && (
+              <>
+                <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 400, marginBottom: 6 }}>Reset Password</h2>
+                <p style={{ color: 'var(--steel)', fontSize: 13, marginBottom: 28 }}>Enter your email and choose a new password</p>
+                <form onSubmit={handleForgot} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Email</label>
+                    <input type="email" required style={inputStyle} value={fpEmail} onChange={e => setFpEmail(e.target.value)} placeholder="you@example.com" />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>New Password</label>
+                    <input type="password" required style={inputStyle} value={fpNew} onChange={e => setFpNew(e.target.value)} placeholder="At least 6 characters" />
+                  </div>
+                  {fpMsg && <p style={{ color: fpMsg.startsWith('✓') ? '#16a34a' : '#dc2626', fontSize: 12, margin: 0 }}>{fpMsg}</p>}
+                  <button type="submit" style={{ padding: '11px', borderRadius: 6, backgroundColor: 'var(--blueprint)', color: 'white', border: 'none', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4 }}>
+                    Reset Password
+                  </button>
+                </form>
+                <p style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--steel)' }}>
+                  <button onClick={() => openModal('signin')} style={{ background: 'none', border: 'none', color: 'var(--blueprint)', cursor: 'pointer', fontSize: 13, fontWeight: 500, padding: 0 }}>← Back to sign in</button>
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Nav */}
       <nav style={{
         position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
@@ -41,55 +230,30 @@ export default function HomePage() {
           <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, letterSpacing: '-0.02em' }}>ArchCopilot</span>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <Link href="/dashboard" style={{
-            padding: '8px 20px', borderRadius: 4,
-            border: '1.5px solid var(--blueprint)',
-            color: 'var(--blueprint)',
-            textDecoration: 'none',
-            fontSize: 14, fontWeight: 500,
-            transition: 'all 0.2s',
-          }}
-            onMouseEnter={e => { (e.target as HTMLElement).style.backgroundColor = 'var(--blueprint)'; (e.target as HTMLElement).style.color = 'white'; }}
-            onMouseLeave={e => { (e.target as HTMLElement).style.backgroundColor = 'transparent'; (e.target as HTMLElement).style.color = 'var(--blueprint)'; }}
-          >
-            Dashboard
-          </Link>
-          <Link href="/project/new" style={{
-            padding: '8px 20px', borderRadius: 4,
-            backgroundColor: 'var(--amber)',
-            color: 'white',
-            textDecoration: 'none',
-            fontSize: 14, fontWeight: 500,
-          }}>
-            New Project →
-          </Link>
+          {user ? (
+            <>
+              <span style={{ fontSize: 13, color: 'var(--steel)', marginRight: 4 }}>Hi, {user.name.split(' ')[0]}</span>
+              <Link href="/dashboard" style={{ padding: '8px 20px', borderRadius: 4, border: '1.5px solid var(--blueprint)', color: 'var(--blueprint)', textDecoration: 'none', fontSize: 14, fontWeight: 500 }}>
+                Dashboard
+              </Link>
+            </>
+          ) : (
+            <>
+              <button onClick={() => openModal('signin')} style={{ padding: '8px 20px', borderRadius: 4, border: '1.5px solid var(--blueprint)', color: 'var(--blueprint)', backgroundColor: 'transparent', fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+                Sign In
+              </button>
+              <button onClick={() => openModal('signup')} style={{ padding: '8px 20px', borderRadius: 4, backgroundColor: 'var(--amber)', color: 'white', border: 'none', fontSize: 14, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+                Sign Up →
+              </button>
+            </>
+          )}
         </div>
       </nav>
 
       {/* Hero */}
-      <section style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'flex-start',
-        padding: '120px 80px 80px',
-        position: 'relative',
-        overflow: 'hidden',
-      }}>
+      <section style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'flex-start', padding: '120px 80px 80px', position: 'relative', overflow: 'hidden' }}>
         {/* Blueprint grid bg */}
-        <div style={{
-          position: 'absolute', top: 0, right: 0, width: '55%', height: '100%',
-          opacity: mounted ? 0.07 : 0,
-          transition: 'opacity 1s ease',
-          backgroundImage: `
-            linear-gradient(var(--blueprint) 1px, transparent 1px),
-            linear-gradient(90deg, var(--blueprint) 1px, transparent 1px),
-            linear-gradient(var(--blueprint-light) 1px, transparent 1px),
-            linear-gradient(90deg, var(--blueprint-light) 1px, transparent 1px)
-          `,
-          backgroundSize: '80px 80px, 80px 80px, 16px 16px, 16px 16px',
-        }} />
+        <div style={{ position: 'absolute', top: 0, right: 0, width: '55%', height: '100%', opacity: mounted ? 0.07 : 0, transition: 'opacity 1s ease', backgroundImage: `linear-gradient(var(--blueprint) 1px, transparent 1px),linear-gradient(90deg, var(--blueprint) 1px, transparent 1px),linear-gradient(var(--blueprint-light) 1px, transparent 1px),linear-gradient(90deg, var(--blueprint-light) 1px, transparent 1px)`, backgroundSize: '80px 80px, 80px 80px, 16px 16px, 16px 16px' }} />
 
         {/* Architectural lines decoration */}
         <svg style={{ position: 'absolute', top: 80, right: 80, opacity: 0.12 }} width="500" height="500" viewBox="0 0 500 500">
@@ -108,90 +272,32 @@ export default function HomePage() {
         </svg>
 
         {/* Tag */}
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          padding: '6px 14px', borderRadius: 100,
-          border: '1px solid var(--amber)',
-          marginBottom: 32,
-          opacity: mounted ? 1 : 0,
-          transform: mounted ? 'none' : 'translateY(10px)',
-          transition: 'all 0.6s ease',
-          backgroundColor: 'rgba(200,133,58,0.06)',
-        }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 100, border: '1px solid var(--amber)', marginBottom: 32, opacity: mounted ? 1 : 0, transform: mounted ? 'none' : 'translateY(10px)', transition: 'all 0.6s ease', backgroundColor: 'rgba(200,133,58,0.06)' }}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'var(--amber)', display: 'inline-block' }} />
           <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--amber)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>AI Architectural Copilot</span>
         </div>
 
-        <h1 style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: 'clamp(48px, 7vw, 92px)',
-          fontWeight: 300,
-          lineHeight: 1.05,
-          letterSpacing: '-0.03em',
-          maxWidth: '700px',
-          marginBottom: 28,
-          opacity: mounted ? 1 : 0,
-          transform: mounted ? 'none' : 'translateY(20px)',
-          transition: 'all 0.7s ease 0.1s',
-        }}>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(48px, 7vw, 92px)', fontWeight: 300, lineHeight: 1.05, letterSpacing: '-0.03em', maxWidth: '700px', marginBottom: 28, opacity: mounted ? 1 : 0, transform: mounted ? 'none' : 'translateY(20px)', transition: 'all 0.7s ease 0.1s' }}>
           Design faster.<br />
           <em style={{ fontStyle: 'italic', color: 'var(--blueprint-mid)' }}>Build smarter.</em>
         </h1>
 
-        <p style={{
-          fontSize: 18, lineHeight: 1.7,
-          color: 'var(--steel)',
-          maxWidth: 520,
-          marginBottom: 48,
-          opacity: mounted ? 1 : 0,
-          transform: mounted ? 'none' : 'translateY(20px)',
-          transition: 'all 0.7s ease 0.2s',
-          fontWeight: 300,
-        }}>
+        <p style={{ fontSize: 18, lineHeight: 1.7, color: 'var(--steel)', maxWidth: 520, marginBottom: 48, opacity: mounted ? 1 : 0, transform: mounted ? 'none' : 'translateY(20px)', transition: 'all 0.7s ease 0.2s', fontWeight: 300 }}>
           From client brief to complete architectural package — floor plans, elevations, cost estimates, BOQ, and 3D concepts — in minutes, not days.
         </p>
 
-        <div style={{
-          display: 'flex', gap: 16, flexWrap: 'wrap',
-          opacity: mounted ? 1 : 0,
-          transform: mounted ? 'none' : 'translateY(20px)',
-          transition: 'all 0.7s ease 0.3s',
-        }}>
-          <Link href="/project/new" style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            padding: '14px 32px', borderRadius: 4,
-            backgroundColor: 'var(--blueprint)',
-            color: 'white', textDecoration: 'none',
-            fontSize: 15, fontWeight: 500,
-            letterSpacing: '0.01em',
-            boxShadow: '0 4px 24px rgba(26,39,68,0.2)',
-          }}>
-            Start a Project
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
-          </Link>
-          <Link href="/dashboard" style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            padding: '14px 32px', borderRadius: 4,
-            border: '1.5px solid var(--line-strong)',
-            color: 'var(--ink)', textDecoration: 'none',
-            fontSize: 15, fontWeight: 400,
-          }}>
-            View Dashboard
-          </Link>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', opacity: mounted ? 1 : 0, transform: mounted ? 'none' : 'translateY(20px)', transition: 'all 0.7s ease 0.3s' }}>
+          <button onClick={() => openModal('signup')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '14px 32px', borderRadius: 4, backgroundColor: 'var(--blueprint)', color: 'white', border: 'none', fontSize: 15, fontWeight: 500, letterSpacing: '0.01em', boxShadow: '0 4px 24px rgba(26,39,68,0.2)', cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+            Get Started Free
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+          </button>
+          <button onClick={() => openModal('signin')} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '14px 32px', borderRadius: 4, border: '1.5px solid var(--line-strong)', color: 'var(--ink)', backgroundColor: 'transparent', fontSize: 15, fontWeight: 400, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+            Sign In to Dashboard
+          </button>
         </div>
 
         {/* Stats bar */}
-        <div style={{
-          display: 'flex', gap: 0,
-          marginTop: 80,
-          borderTop: '1px solid var(--line)',
-          paddingTop: 40,
-          width: '100%', maxWidth: 600,
-          opacity: mounted ? 1 : 0,
-          transition: 'opacity 0.8s ease 0.5s',
-        }}>
+        <div style={{ display: 'flex', gap: 0, marginTop: 80, borderTop: '1px solid var(--line)', paddingTop: 40, width: '100%', maxWidth: 600, opacity: mounted ? 1 : 0, transition: 'opacity 0.8s ease 0.5s' }}>
           {STATS.map((s, i) => (
             <div key={i} style={{ flex: 1, paddingRight: 32 }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 36, fontWeight: 600, color: 'var(--blueprint)', lineHeight: 1 }}>{s.value}</div>
@@ -207,21 +313,14 @@ export default function HomePage() {
           <div style={{ marginBottom: 64 }}>
             <p style={{ fontSize: 11, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--amber-light)', marginBottom: 16, fontFamily: 'var(--font-mono)' }}>— Capabilities</p>
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 300, lineHeight: 1.1, letterSpacing: '-0.02em' }}>
-              Everything an architect<br />
-              <em style={{ color: 'var(--blueprint-light)' }}>needs to move fast</em>
+              Everything an architect<br /><em style={{ color: 'var(--blueprint-light)' }}>needs to move fast</em>
             </h2>
           </div>
-
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1px', backgroundColor: 'rgba(255,255,255,0.1)' }}>
             {FEATURES.map((f, i) => (
-              <div key={i} style={{
-                padding: '40px 36px',
-                backgroundColor: 'var(--blueprint)',
-                transition: 'background-color 0.2s',
-              }}
+              <div key={i} style={{ padding: '40px 36px', backgroundColor: 'var(--blueprint)', transition: 'background-color 0.2s' }}
                 onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--blueprint-mid)')}
-                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'var(--blueprint)')}
-              >
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'var(--blueprint)')}>
                 <div style={{ fontSize: 28, marginBottom: 16, opacity: 0.7 }}>{f.icon}</div>
                 <div style={{ fontSize: 16, fontWeight: 500, marginBottom: 10, letterSpacing: '-0.01em' }}>{f.title}</div>
                 <div style={{ fontSize: 14, color: 'var(--steel-light)', lineHeight: 1.6, fontWeight: 300 }}>{f.desc}</div>
@@ -236,18 +335,13 @@ export default function HomePage() {
         <div style={{ maxWidth: 900, margin: '0 auto' }}>
           <p style={{ fontSize: 11, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--amber)', marginBottom: 16, fontFamily: 'var(--font-mono)' }}>— Workflow</p>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 300, marginBottom: 64, lineHeight: 1.1, letterSpacing: '-0.02em' }}>Four steps<br />to a complete design</h2>
-
           {[
-            { n: '01', title: 'Enter Requirements', body: 'Plot size, BHK, style, budget, and special needs in natural language. Our AI understands the way architects think.' },
-            { n: '02', title: 'AI Analysis & Validation', body: 'Requirements are parsed into structured data, validated against architectural rules, and optimized for your plot.' },
+            { n: '01', title: 'Create Account', body: 'Sign up in seconds. Your projects are saved to your account and accessible from any device.' },
+            { n: '02', title: 'Enter Requirements', body: 'Plot size, BHK, style, budget, and special needs in natural language. Our AI understands the way architects think.' },
             { n: '03', title: 'Design Generation', body: 'Floor plans, cost estimates, BOQ, interior concepts, MEP drafts, and compliance notes — all generated simultaneously.' },
-            { n: '04', title: 'Review & Export', body: 'Edit room sizes, compare versions, and export to PDF, DXF, or share with your client directly.' },
+            { n: '04', title: 'Review & Export', body: 'Edit room sizes, compare layout options, and export to PDF, DXF, SVG or share with your client directly.' },
           ].map((step, i) => (
-            <div key={i} style={{
-              display: 'flex', gap: 48, alignItems: 'flex-start',
-              padding: '40px 0',
-              borderBottom: '1px solid var(--line)',
-            }}>
+            <div key={i} style={{ display: 'flex', gap: 48, alignItems: 'flex-start', padding: '40px 0', borderBottom: '1px solid var(--line)' }}>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--steel)', paddingTop: 6, minWidth: 32 }}>{step.n}</div>
               <div>
                 <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, marginBottom: 12, letterSpacing: '-0.01em' }}>{step.title}</h3>
@@ -259,28 +353,15 @@ export default function HomePage() {
       </section>
 
       {/* CTA */}
-      <section style={{
-        padding: '80px',
-        backgroundColor: 'var(--ink)',
-        color: 'white',
-        textAlign: 'center',
-      }}>
+      <section style={{ padding: '80px', backgroundColor: 'var(--ink)', color: 'white', textAlign: 'center' }}>
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--amber)', marginBottom: 24 }}>— Start Today</p>
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 300, marginBottom: 24, letterSpacing: '-0.02em' }}>
           Your next project,<br /><em style={{ color: 'var(--blueprint-light)' }}>ready in minutes</em>
         </h2>
-        <p style={{ color: 'var(--steel-light)', fontSize: 16, marginBottom: 40, fontWeight: 300 }}>
-          No signup required. Start your first project immediately.
-        </p>
-        <Link href="/project/new" style={{
-          display: 'inline-flex', alignItems: 'center', gap: 10,
-          padding: '16px 40px', borderRadius: 4,
-          backgroundColor: 'var(--amber)',
-          color: 'white', textDecoration: 'none',
-          fontSize: 16, fontWeight: 500,
-        }}>
-          Create Project →
-        </Link>
+        <p style={{ color: 'var(--steel-light)', fontSize: 16, marginBottom: 40, fontWeight: 300 }}>Free to use. No credit card required.</p>
+        <button onClick={() => openModal('signup')} style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '16px 40px', borderRadius: 4, backgroundColor: 'var(--amber)', color: 'white', border: 'none', fontSize: 16, fontWeight: 500, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+          Create Free Account →
+        </button>
       </section>
 
       {/* Footer */}
@@ -297,5 +378,13 @@ export default function HomePage() {
         </p>
       </footer>
     </main>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={null}>
+      <HomePageInner />
+    </Suspense>
   );
 }

@@ -214,14 +214,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 color: 'var(--steel)',
               }}
             />
-            <button onClick={() => window.print()} style={{
+            <button onClick={() => setActiveTab('export')} style={{
               padding: '6px 16px', borderRadius: 4,
-              border: '1.5px solid var(--line-strong)',
-              background: 'white', color: 'var(--ink)',
+              border: '1.5px solid var(--blueprint)',
+              background: 'var(--blueprint)', color: 'white',
               fontSize: 13, cursor: 'pointer',
-              fontFamily: 'var(--font-body)',
+              fontFamily: 'var(--font-body)', fontWeight: 500,
             }}>
-              Export PDF
+              ⬇ Export / Download
             </button>
           </div>
         )}
@@ -1513,7 +1513,272 @@ function ComplianceTab({ project, complianceData }: { project: Project; complian
 }
 
 function ExportTab({ project }: { project: Project }) {
-  const handlePrint = () => window.print();
+  const rooms = project.layoutOptions?.find(o => o.id === (project.selectedLayoutId || 'option-a'))?.rooms ?? [];
+
+  // PDF checklist state
+  const [pdfChecklist, setPdfChecklist] = useState({
+    coverPage: true,
+    floorPlans: true,
+    costEstimate: true,
+    boq: true,
+    timeline: true,
+    complianceNotes: true,
+    designNotes: true,
+  });
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+  const [copyDone, setCopyDone] = useState(false);
+
+  const checklistLabels: Record<keyof typeof pdfChecklist, string> = {
+    coverPage: 'Cover Page & Project Summary',
+    floorPlans: 'Floor Plans (All Floors)',
+    costEstimate: 'Cost Estimation',
+    boq: 'Bill of Quantities (BOQ)',
+    timeline: 'Construction Timeline',
+    complianceNotes: 'Compliance & Vastu Notes',
+    designNotes: 'Design Narrative',
+  };
+
+  const handleGeneratePDF = async () => {
+    setPdfGenerating(true);
+    const req = project.requirements;
+    const cost = project.costEstimate;
+
+    const selectedRooms = rooms;
+    const floorNums = [...new Set(selectedRooms.map(r => r.floor))].sort();
+    const totalArea = selectedRooms.filter(r => r.type !== 'parking' && r.type !== 'garden' && r.floor === 0).reduce((s, r) => s + r.w * r.h, 0);
+
+    const floorSVGs = floorNums.map(floor => {
+      const fr = selectedRooms.filter(r => r.floor === floor);
+      const scale = 4;
+      const rects = fr.map(r => `
+        <rect x="${r.x * scale}" y="${r.y * scale}" width="${r.w * scale}" height="${r.h * scale}" fill="#1a2744" stroke="#4a72c4" stroke-width="2"/>
+        <text x="${(r.x + r.w / 2) * scale}" y="${(r.y + r.h / 2) * scale - 4}" fill="#e2e8f0" font-family="monospace" font-size="7" text-anchor="middle">${r.name.toUpperCase()}</text>
+        <text x="${(r.x + r.w / 2) * scale}" y="${(r.y + r.h / 2) * scale + 8}" fill="#94a3b8" font-family="monospace" font-size="6" text-anchor="middle">${r.w}' × ${r.h}'</text>
+      `).join('');
+      const maxX = Math.max(...fr.map(r => (r.x + r.w) * scale), 100);
+      const maxY = Math.max(...fr.map(r => (r.y + r.h) * scale), 80);
+      return { floor, svg: `<svg width="${maxX + 20}" height="${maxY + 20}" viewBox="-10 -10 ${maxX + 20} ${maxY + 20}" xmlns="http://www.w3.org/2000/svg" style="background:#040811">${rects}</svg>` };
+    });
+
+    const win = window.open('', '_blank');
+    if (!win) { alert('Please allow pop-ups to export PDF.'); setPdfGenerating(false); return; }
+
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${project.name} — Design Report</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: 'Georgia', serif; background: #f9f7f2; color: #1a2744; }
+      @media print {
+        .no-print { display: none !important; }
+        .page-break { page-break-before: always; }
+        body { background: white; }
+      }
+      .cover { min-height: 100vh; background: #1a2744; color: white; display: flex; flex-direction: column; justify-content: center; padding: 80px; }
+      .cover h1 { font-size: 52px; font-weight: 300; line-height: 1.1; margin-bottom: 20px; }
+      .cover .meta { font-family: monospace; font-size: 13px; opacity: 0.6; margin-bottom: 8px; }
+      .cover .amber { color: #c8853a; }
+      .section { padding: 60px 80px; border-bottom: 1px solid #e2d9cc; }
+      .section h2 { font-size: 28px; font-weight: 400; margin-bottom: 8px; color: #1a2744; }
+      .section .label { font-family: monospace; font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: #c8853a; margin-bottom: 16px; }
+      .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px; }
+      .card { border: 1px solid #e2d9cc; border-radius: 6px; padding: 20px; background: white; }
+      .card .val { font-size: 32px; font-weight: 600; color: #1a2744; line-height: 1; }
+      .card .lbl { font-size: 12px; color: #7a8a9a; margin-top: 6px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
+      th { background: #1a2744; color: white; padding: 10px 14px; text-align: left; font-family: monospace; font-size: 11px; letter-spacing: 0.08em; }
+      td { padding: 9px 14px; border-bottom: 1px solid #f0ece4; }
+      tr:nth-child(even) td { background: #faf8f4; }
+      .disclaimer { background: #fff8f0; border: 1px solid #f59e0b; border-radius: 6px; padding: 20px; margin-top: 40px; font-size: 12px; line-height: 1.8; color: #7a5a1a; }
+      .floor-plan-container { background: #040811; border-radius: 8px; padding: 20px; margin-top: 24px; }
+      .floor-label { font-family: monospace; font-size: 11px; color: #c8853a; letter-spacing: 0.1em; margin-bottom: 10px; }
+      .print-btn { position: fixed; top: 20px; right: 20px; padding: 12px 28px; background: #c8853a; color: white; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; font-family: sans-serif; z-index: 999; }
+    </style></head><body>
+    <button class="no-print print-btn" onclick="window.print()">🖨 Print / Save PDF</button>
+
+    ${pdfChecklist.coverPage ? `
+    <div class="cover">
+      <div class="meta amber">ARCHCOPILOT — AI DESIGN REPORT</div>
+      <div class="meta" style="margin-bottom:40px">${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+      <h1>${project.name}</h1>
+      <div style="height:2px;background:#c8853a;width:80px;margin:20px 0"></div>
+      <div class="meta">${req.plotWidth}' × ${req.plotDepth}' PLOT &nbsp;·&nbsp; ${req.bhk} BHK &nbsp;·&nbsp; ${req.floors} FLOOR${req.floors > 1 ? 'S' : ''}</div>
+      <div class="meta">${req.location} &nbsp;·&nbsp; ${req.style.toUpperCase()} STYLE &nbsp;·&nbsp; ₹${req.budget} LAKHS</div>
+      <div style="margin-top:60px;display:grid;grid-template-columns:repeat(4,1fr);gap:24px;max-width:600px">
+        <div><div style="font-size:28px;font-weight:600;color:#c8853a">${req.plotSize}</div><div style="font-size:11px;opacity:0.5;margin-top:4px">SQ YARDS</div></div>
+        <div><div style="font-size:28px;font-weight:600;color:#c8853a">${totalArea}</div><div style="font-size:11px;opacity:0.5;margin-top:4px">SQ FT BUILT UP</div></div>
+        <div><div style="font-size:28px;font-weight:600;color:#c8853a">${req.bhk}</div><div style="font-size:11px;opacity:0.5;margin-top:4px">BEDROOMS</div></div>
+        <div><div style="font-size:28px;font-weight:600;color:#c8853a">${rooms.length}</div><div style="font-size:11px;opacity:0.5;margin-top:4px">TOTAL ROOMS</div></div>
+      </div>
+    </div>` : ''}
+
+    ${pdfChecklist.floorPlans ? `
+    <div class="section page-break">
+      <div class="label">— Floor Plans</div>
+      <h2>Layout Drawings</h2>
+      ${floorSVGs.map(({ floor, svg }) => `
+        <div style="margin-top:32px">
+          <div class="floor-label">${floor === 0 ? 'GROUND FLOOR' : floor === 1 ? 'FIRST FLOOR' : 'SECOND FLOOR'} — SCALE 1:100 (APPROX)</div>
+          <div class="floor-plan-container">${svg}</div>
+        </div>
+      `).join('')}
+      <p style="font-size:11px;color:#7a8a9a;margin-top:16px;font-family:monospace">* Dimensions in feet. All plans are AI-generated preliminary concepts.</p>
+    </div>` : ''}
+
+    ${pdfChecklist.costEstimate && cost ? `
+    <div class="section page-break">
+      <div class="label">— Cost Estimation</div>
+      <h2>Construction Cost Summary</h2>
+      <div class="grid2">
+        <div class="card"><div class="val">₹${(cost.economy / 100000).toFixed(1)}L</div><div class="lbl">Economy Estimate</div></div>
+        <div class="card"><div class="val">₹${(cost.standard / 100000).toFixed(1)}L</div><div class="lbl">Standard Estimate</div></div>
+        <div class="card"><div class="val">₹${(cost.premium / 100000).toFixed(1)}L</div><div class="lbl">Premium Estimate</div></div>
+        <div class="card"><div class="val">${totalArea}</div><div class="lbl">Built-Up Area (sq ft)</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Component</th><th>Economy</th><th>Standard</th><th>Premium</th></tr></thead>
+        <tbody>
+          <tr><td>Structure & Foundation</td><td>₹${(cost.breakdown.structure * 0.85 / 100000).toFixed(1)}L</td><td>₹${(cost.breakdown.structure / 100000).toFixed(1)}L</td><td>₹${(cost.breakdown.structure * 1.3 / 100000).toFixed(1)}L</td></tr>
+          <tr><td>Finishing & Interiors</td><td>₹${(cost.breakdown.finishing * 0.85 / 100000).toFixed(1)}L</td><td>₹${(cost.breakdown.finishing / 100000).toFixed(1)}L</td><td>₹${(cost.breakdown.finishing * 1.3 / 100000).toFixed(1)}L</td></tr>
+          <tr><td>Electrical Works</td><td>₹${(cost.breakdown.electrical * 0.85 / 100000).toFixed(1)}L</td><td>₹${(cost.breakdown.electrical / 100000).toFixed(1)}L</td><td>₹${(cost.breakdown.electrical * 1.3 / 100000).toFixed(1)}L</td></tr>
+          <tr><td>Plumbing & Sanitation</td><td>₹${(cost.breakdown.plumbing * 0.85 / 100000).toFixed(1)}L</td><td>₹${(cost.breakdown.plumbing / 100000).toFixed(1)}L</td><td>₹${(cost.breakdown.plumbing * 1.3 / 100000).toFixed(1)}L</td></tr>
+          <tr><td>Interior Design</td><td>₹${(cost.breakdown.interiors * 0.85 / 100000).toFixed(1)}L</td><td>₹${(cost.breakdown.interiors / 100000).toFixed(1)}L</td><td>₹${(cost.breakdown.interiors * 1.3 / 100000).toFixed(1)}L</td></tr>
+        </tbody>
+      </table>
+    </div>` : ''}
+
+    ${pdfChecklist.boq && project.boq ? `
+    <div class="section page-break">
+      <div class="label">— Bill of Quantities</div>
+      <h2>Material Schedule</h2>
+      <table>
+        <thead><tr><th>Material</th><th>Unit</th><th>Quantity</th><th>Economy Rate</th><th>Standard Rate</th><th>Premium Rate</th></tr></thead>
+        <tbody>${project.boq.map(b => `<tr><td>${b.material}</td><td>${b.unit}</td><td>${b.quantity}</td><td>₹${b.rateEconomy}</td><td>₹${b.rateStandard}</td><td>₹${b.ratePremium}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>` : ''}
+
+    ${pdfChecklist.timeline && project.timeline ? `
+    <div class="section page-break">
+      <div class="label">— Construction Timeline</div>
+      <h2>Project Schedule</h2>
+      <table>
+        <thead><tr><th>Phase</th><th>Duration</th><th>Weeks</th><th>Key Tasks</th></tr></thead>
+        <tbody>${project.timeline.map(t => `<tr><td>${t.phase}</td><td>${t.duration}</td><td>W${t.startWeek}–W${t.endWeek}</td><td>${t.tasks.slice(0, 2).join(', ')}</td></tr>`).join('')}</tbody>
+      </table>
+    </div>` : ''}
+
+    ${pdfChecklist.complianceNotes && project.complianceNotes ? `
+    <div class="section page-break">
+      <div class="label">— Compliance & Vastu</div>
+      <h2>Regulatory Notes</h2>
+      <ul style="margin-top:20px;padding-left:20px;line-height:2">${project.complianceNotes.map(n => `<li style="font-size:13px;color:#1a2744">${n}</li>`).join('')}</ul>
+    </div>` : ''}
+
+    ${pdfChecklist.designNotes && project.designNotes ? `
+    <div class="section page-break">
+      <div class="label">— Design Narrative</div>
+      <h2>Design Concept</h2>
+      <p style="font-size:14px;line-height:1.9;color:#3a4a5a;margin-top:20px;max-width:700px">${project.designNotes}</p>
+    </div>` : ''}
+
+    <div class="section">
+      <div class="disclaimer">
+        <strong>⚠ LEGAL DISCLAIMER:</strong> All drawings and documents in this package are AI-generated preliminary concepts for architectural review only.
+        Structural calculations, electrical layouts, plumbing designs, HVAC plans, fire safety compliance, and municipality submission
+        must be reviewed and stamped by licensed professionals. Do not use for construction without proper professional approval and municipal clearances.
+      </div>
+      <p style="font-size:11px;color:#aaa;margin-top:20px;font-family:monospace;text-align:center">Generated by ArchCopilot &nbsp;·&nbsp; ${new Date().toISOString()}</p>
+    </div>
+    </body></html>`);
+    win.document.close();
+    setTimeout(() => { setPdfGenerating(false); }, 1000);
+  };
+
+  const handleDownloadDXF = () => {
+    if (rooms.length === 0) { alert('No layout selected. Please select a floor plan first.'); return; }
+    import('@/lib/dxfExporter').then(({ exportToDXF }) => {
+      const dxfContent = exportToDXF(rooms);
+      const blob = new Blob([dxfContent], { type: 'application/dxf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${project.name.replace(/\s+/g, '_')}_floor_plan.dxf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+  };
+
+  const handleDownloadSVG = () => {
+    if (rooms.length === 0) { alert('No layout selected. Please select a floor plan first.'); return; }
+    const scale = 8;
+    const floorNums = [...new Set(rooms.map(r => r.floor))].sort();
+    const svgParts = floorNums.map(floor => {
+      const fr = rooms.filter(r => r.floor === floor);
+      const maxX = Math.max(...fr.map(r => (r.x + r.w) * scale), 100);
+      const maxY = Math.max(...fr.map(r => (r.y + r.h) * scale), 80);
+      const rects = fr.map(r => `
+        <rect x="${r.x * scale}" y="${r.y * scale}" width="${r.w * scale}" height="${r.h * scale}" fill="#1a2744" stroke="#4a72c4" stroke-width="2"/>
+        <text x="${(r.x + r.w / 2) * scale}" y="${(r.y + r.h / 2) * scale - 4}" fill="#e2e8f0" font-family="monospace" font-size="9" text-anchor="middle">${r.name}</text>
+        <text x="${(r.x + r.w / 2) * scale}" y="${(r.y + r.h / 2) * scale + 10}" fill="#94a3b8" font-family="monospace" font-size="7" text-anchor="middle">${r.w}' × ${r.h}'</text>
+        ${r.doors.map(d => {
+          const dw = d.width * scale; let dx = 0, dy = 0;
+          if (d.side === 'front') { dx = (r.x + d.offset) * scale; dy = (r.y + r.h) * scale; return `<line x1="${dx}" y1="${dy}" x2="${dx + dw}" y2="${dy}" stroke="#f59e0b" stroke-width="3"/>`; }
+          if (d.side === 'back') { dx = (r.x + d.offset) * scale; dy = r.y * scale; return `<line x1="${dx}" y1="${dy}" x2="${dx + dw}" y2="${dy}" stroke="#f59e0b" stroke-width="3"/>`; }
+          if (d.side === 'left') { dx = r.x * scale; dy = (r.y + d.offset) * scale; return `<line x1="${dx}" y1="${dy}" x2="${dx}" y2="${dy + dw}" stroke="#f59e0b" stroke-width="3"/>`; }
+          return `<line x1="${(r.x + r.w) * scale}" y1="${(r.y + d.offset) * scale}" x2="${(r.x + r.w) * scale}" y2="${(r.y + d.offset + d.width) * scale}" stroke="#f59e0b" stroke-width="3"/>`;
+        }).join('')}
+        ${r.windows.map(w => {
+          if (w.side === 'front') return `<line x1="${(r.x + w.offset) * scale}" y1="${(r.y + r.h) * scale}" x2="${(r.x + w.offset + w.width) * scale}" y2="${(r.y + r.h) * scale}" stroke="#38bdf8" stroke-width="4"/>`;
+          if (w.side === 'back') return `<line x1="${(r.x + w.offset) * scale}" y1="${r.y * scale}" x2="${(r.x + w.offset + w.width) * scale}" y2="${r.y * scale}" stroke="#38bdf8" stroke-width="4"/>`;
+          if (w.side === 'left') return `<line x1="${r.x * scale}" y1="${(r.y + w.offset) * scale}" x2="${r.x * scale}" y2="${(r.y + w.offset + w.width) * scale}" stroke="#38bdf8" stroke-width="4"/>`;
+          return `<line x1="${(r.x + r.w) * scale}" y1="${(r.y + w.offset) * scale}" x2="${(r.x + r.w) * scale}" y2="${(r.y + w.offset + w.width) * scale}" stroke="#38bdf8" stroke-width="4"/>`;
+        }).join('')}
+      `).join('');
+      return `<g transform="translate(10, ${floor * (maxY + 60) + 30})" id="floor-${floor}">
+        <text x="0" y="-10" fill="#c8853a" font-family="monospace" font-size="11" letter-spacing="2">${floor === 0 ? 'GROUND FLOOR' : floor === 1 ? 'FIRST FLOOR' : 'SECOND FLOOR'} — SCALE 1:100</text>
+        <rect x="-5" y="-5" width="${maxX + 10}" height="${maxY + 10}" fill="#040811" rx="4"/>
+        ${rects}
+      </g>`;
+    });
+    const totalH = floorNums.length * 500 + 80;
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="900" height="${totalH}" viewBox="0 0 900 ${totalH}" style="background:#040811">\n${svgParts.join('\n')}\n</svg>`;
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${project.name.replace(/\s+/g, '_')}_floor_plans.svg`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadCSV = () => {
+    const rows: string[] = ['Material,Unit,Quantity,Rate (Economy),Rate (Standard),Rate (Premium),Cost (Standard)'];
+    if (project.boq && project.boq.length > 0) {
+      project.boq.forEach(b => {
+        rows.push(`"${b.material}","${b.unit}",${b.quantity},${b.rateEconomy},${b.rateStandard},${b.ratePremium},${(b.quantity * b.rateStandard).toFixed(0)}`);
+      });
+    } else {
+      rows.push('"No BOQ data available","—","—","—","—","—","—"');
+    }
+    if (project.costEstimate) {
+      rows.push('');
+      rows.push('COST SUMMARY,,,,,,,');
+      rows.push(`"Economy Total",,"₹${(project.costEstimate.economy / 100000).toFixed(1)} Lakhs",,,,`);
+      rows.push(`"Standard Total",,"₹${(project.costEstimate.standard / 100000).toFixed(1)} Lakhs",,,,`);
+      rows.push(`"Premium Total",,"₹${(project.costEstimate.premium / 100000).toFixed(1)} Lakhs",,,,`);
+    }
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${project.name.replace(/\s+/g, '_')}_BOQ.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const handleDownloadJSON = () => {
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
@@ -1521,7 +1786,16 @@ function ExportTab({ project }: { project: Project }) {
     const a = document.createElement('a');
     a.href = url;
     a.download = `${project.name.replace(/\s+/g, '_')}_data.json`;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyLink = async () => {
+    await navigator.clipboard.writeText(window.location.href);
+    setCopyDone(true);
+    setTimeout(() => setCopyDone(false), 2500);
   };
 
   return (
@@ -1531,45 +1805,110 @@ function ExportTab({ project }: { project: Project }) {
         Export your architectural design package in various formats for sharing and professional review.
       </p>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
-        {[
-          { title: 'Complete Report (PDF)', desc: 'All drawings, estimates, BOQ, and compliance in one document', icon: '📄', action: handlePrint, label: 'Generate PDF' },
-          { title: 'Project Data (JSON)', desc: 'Full project data for import into other tools or sharing', icon: '{ }', action: handleDownloadJSON, label: 'Download JSON' },
-          { title: 'Floor Plan (SVG)', desc: 'Scalable vector drawings for CAD tools', icon: '⊞', action: () => alert('SVG export: In next version'), label: 'Export SVG' },
-          { title: 'Cost Report (CSV)', desc: 'BOQ and cost estimates in spreadsheet format', icon: '≡', action: () => alert('CSV export: In next version'), label: 'Export CSV' },
-          { title: 'Share Link', desc: 'Generate a read-only link to share with clients', icon: '↗', action: () => { navigator.clipboard.writeText(window.location.href); alert('Link copied!'); }, label: 'Copy Link' },
-          { title: 'DXF Drawing', desc: 'AutoCAD-compatible drawing file (Pro feature)', icon: '◱', action: () => alert('DXF export: Professional version'), label: 'Export DXF' },
-        ].map((item, i) => (
-          <div key={i} style={{
-            border: '1px solid var(--line)', borderRadius: 8,
-            backgroundColor: 'white', padding: '24px',
-            display: 'flex', flexDirection: 'column',
-          }}>
-            <div style={{ fontSize: 28, marginBottom: 12 }}>{item.icon}</div>
-            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8, color: 'var(--ink)' }}>{item.title}</div>
-            <div style={{ fontSize: 13, color: 'var(--steel)', lineHeight: 1.6, flex: 1, marginBottom: 16 }}>{item.desc}</div>
-            <button onClick={item.action} style={{
-              padding: '10px 0', borderRadius: 4,
-              border: '1.5px solid var(--blueprint)',
-              backgroundColor: 'white', color: 'var(--blueprint)',
-              fontSize: 13, fontWeight: 500, cursor: 'pointer',
-              fontFamily: 'var(--font-body)',
-              transition: 'all 0.15s',
+      {/* PDF Section with Checklist */}
+      <div style={{ border: '1.5px solid var(--blueprint)', borderRadius: 10, backgroundColor: 'white', padding: '28px 32px', marginBottom: 28 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 40 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+              <span style={{ fontSize: 32 }}>📄</span>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--ink)' }}>Complete Report (PDF)</div>
+                <div style={{ fontSize: 13, color: 'var(--steel)' }}>Select which sections to include in the PDF</div>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px', margin: '20px 0' }}>
+              {(Object.keys(pdfChecklist) as (keyof typeof pdfChecklist)[]).map(key => (
+                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--ink)' }}>
+                  <input
+                    type="checkbox"
+                    checked={pdfChecklist[key]}
+                    onChange={e => setPdfChecklist(p => ({ ...p, [key]: e.target.checked }))}
+                    style={{ width: 15, height: 15, accentColor: 'var(--blueprint)', cursor: 'pointer' }}
+                  />
+                  {checklistLabels[key]}
+                </label>
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={handleGeneratePDF}
+            disabled={pdfGenerating || Object.values(pdfChecklist).every(v => !v)}
+            style={{
+              padding: '12px 28px', borderRadius: 6, border: 'none',
+              backgroundColor: 'var(--blueprint)', color: 'white',
+              fontSize: 14, fontWeight: 600, cursor: 'pointer',
+              fontFamily: 'var(--font-body)', minWidth: 160,
+              opacity: pdfGenerating ? 0.7 : 1,
+              whiteSpace: 'nowrap',
             }}
-              onMouseEnter={e => { (e.currentTarget).style.backgroundColor = 'var(--blueprint)'; (e.currentTarget).style.color = 'white'; }}
-              onMouseLeave={e => { (e.currentTarget).style.backgroundColor = 'white'; (e.currentTarget).style.color = 'var(--blueprint)'; }}
-            >
+          >
+            {pdfGenerating ? '⏳ Generating…' : '⬇ Download PDF'}
+          </button>
+        </div>
+      </div>
+
+      {/* Other exports grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
+        {[
+          {
+            title: 'DXF Drawing',
+            desc: 'AutoCAD-compatible file with all floors, room walls, doors, windows on separate layers (WALLS, DOORS, WINDOWS, LABELS)',
+            icon: '◱',
+            label: '⬇ Export DXF',
+            accent: 'var(--blueprint)',
+            action: handleDownloadDXF,
+          },
+          {
+            title: 'Floor Plan (SVG)',
+            desc: 'Scalable vector drawing with all floors, doors, and windows. Opens in Illustrator, Figma, Inkscape, browsers.',
+            icon: '⊞',
+            label: '⬇ Export SVG',
+            accent: '#0891b2',
+            action: handleDownloadSVG,
+          },
+          {
+            title: 'BOQ Cost Report (CSV)',
+            desc: 'Full Bill of Quantities with materials, quantities, and cost estimates. Opens directly in Excel / Google Sheets.',
+            icon: '≡',
+            label: '⬇ Export CSV',
+            accent: '#16a34a',
+            action: handleDownloadCSV,
+          },
+          {
+            title: 'Project Data (JSON)',
+            desc: 'Complete project object including all layouts, costs, BOQ, and timeline. Use for import or backups.',
+            icon: '{ }',
+            label: '⬇ Download JSON',
+            accent: '#7c3aed',
+            action: handleDownloadJSON,
+          },
+          {
+            title: 'Share Link',
+            desc: 'Copy a direct link to this project. Share with clients or team members who have access to this browser.',
+            icon: '↗',
+            label: copyDone ? '✓ Copied!' : '⎘ Copy Link',
+            accent: copyDone ? '#16a34a' : '#c8853a',
+            action: handleCopyLink,
+          },
+        ].map((item, i) => (
+          <div key={i} style={{ border: '1px solid var(--line)', borderRadius: 8, backgroundColor: 'white', padding: '20px', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ fontSize: 26, marginBottom: 10 }}>{item.icon}</div>
+            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8, color: 'var(--ink)' }}>{item.title}</div>
+            <div style={{ fontSize: 12, color: 'var(--steel)', lineHeight: 1.6, flex: 1, marginBottom: 16 }}>{item.desc}</div>
+            <button onClick={item.action} style={{ padding: '9px 0', borderRadius: 5, border: `1.5px solid ${item.accent}`, backgroundColor: 'white', color: item.accent, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-body)', transition: 'all 0.15s' }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = item.accent; e.currentTarget.style.color = 'white'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'white'; e.currentTarget.style.color = item.accent; }}>
               {item.label}
             </button>
           </div>
         ))}
       </div>
 
-      <div style={{ marginTop: 40, padding: '20px 24px', border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white' }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: 'var(--blueprint)' }}>Legal Disclaimer</h3>
-        <p style={{ fontSize: 13, color: 'var(--steel)', lineHeight: 1.8 }}>
-          All drawings and documents in this package are AI-generated preliminary concepts for architectural review only.
-          <strong> Structural calculations, electrical layouts, plumbing designs, HVAC plans, fire safety compliance, and municipality submission must be reviewed and stamped by licensed professionals.</strong> Do not use for construction without proper professional approval and municipal clearances.
+      <div style={{ marginTop: 32, padding: '20px 24px', border: '1px solid #fde68a', borderRadius: 6, backgroundColor: '#fffbeb' }}>
+        <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: '#92400e' }}>⚠ Legal Disclaimer</h3>
+        <p style={{ fontSize: 12, color: '#78350f', lineHeight: 1.8 }}>
+          All drawings and documents are AI-generated preliminary concepts for architectural review only.
+          <strong> Structural calculations, electrical layouts, plumbing designs, HVAC plans, fire safety compliance, and municipality submission must be reviewed and stamped by licensed professionals.</strong>
         </p>
       </div>
     </div>

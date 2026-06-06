@@ -1154,98 +1154,94 @@ export default function DrawingViewport({
       {/* Properties Panel — shown when a room is selected */}
       {selectedRoom && activeFloor !== -1 && (
         <div
-          className="absolute top-14 right-4 z-20 glass-panel rounded-xl border border-emerald-500/30 shadow-2xl overflow-hidden"
-          style={{ width: 240, maxHeight: 'calc(100% - 100px)', overflowY: 'auto' }}
+          className="absolute top-14 right-3 z-20 glass-panel rounded-xl shadow-2xl overflow-hidden"
+          style={{ width: 300, maxHeight: 'calc(100% - 110px)', overflowY: 'auto', border: '2px solid #10b981', boxShadow: '0 0 0 4px rgba(16,185,129,0.12), 0 24px 60px rgba(0,0,0,0.5)' }}
           onMouseDown={e => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="px-3 py-2 bg-emerald-950/60 border-b border-emerald-500/20 flex items-center justify-between">
-            <span className="text-[10px] font-bold font-mono text-emerald-400 uppercase tracking-wide">
-              {selectedRoom.name}
-            </span>
+          <div className="px-4 py-3 bg-emerald-950/80 border-b border-emerald-500/30 flex items-center justify-between">
+            <div>
+              <span className="text-sm font-bold font-mono text-emerald-300 uppercase tracking-wide block">
+                {selectedRoom.name}
+              </span>
+              <span className="text-[11px] text-emerald-600 font-mono">Room Properties</span>
+            </div>
             <button
-              className="text-slate-500 hover:text-white text-xs px-1"
+              className="w-7 h-7 flex items-center justify-center rounded-full bg-slate-800 hover:bg-red-900 text-slate-400 hover:text-red-300 text-sm transition"
               onClick={() => onSelectRoom(null)}
+              title="Close panel"
             >✕</button>
           </div>
 
           {/* Room size info */}
-          <div className="px-3 py-1.5 text-[10px] text-slate-400 font-mono border-b border-slate-800">
-            {selectedRoom.w}′ × {selectedRoom.h}′ &nbsp;·&nbsp; {selectedRoom.w * selectedRoom.h} sq ft &nbsp;·&nbsp; Floor {selectedRoom.floor}
+          <div className="px-4 py-2.5 text-xs text-slate-300 font-mono border-b border-slate-800 bg-slate-900/40 flex gap-3">
+            <span className="text-emerald-400 font-bold">{selectedRoom.w}′ × {selectedRoom.h}′</span>
+            <span>·</span>
+            <span>{selectedRoom.w * selectedRoom.h} sq ft</span>
+            <span>·</span>
+            <span>Floor {selectedRoom.floor}</span>
           </div>
 
           {/* ── DOORS ── */}
-          <div className="px-3 pt-2 pb-1">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] font-bold font-mono text-amber-400 uppercase">Doors ({selectedRoom.doors.length})</span>
+          <div className="px-4 pt-3 pb-2">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold font-mono text-amber-400 uppercase tracking-wide">🚪 Doors ({selectedRoom.doors.length})</span>
               <button
-                className="text-[9px] bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 px-2 py-0.5 rounded font-mono"
+                className="text-xs bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 px-3 py-1 rounded-md font-semibold border border-amber-500/30 transition"
                 onClick={() => { setAddingDoor(!addingDoor); setAddingWindow(false); }}
               >+ Add Door</button>
             </div>
 
             {/* Add Door Form */}
             {addingDoor && (
-              <div className="bg-slate-900/80 border border-amber-500/20 rounded p-2 mb-2 text-[10px]">
-                <div className="flex gap-1 mb-1">
-                  <label className="text-slate-400 w-14 shrink-0 pt-0.5">Side</label>
-                  <select
-                    className="flex-1 bg-slate-800 text-white rounded text-[10px] px-1 py-0.5 border border-slate-700"
-                    value={newDoor.side}
-                    onChange={e => setNewDoor(p => ({ ...p, side: e.target.value as typeof p.side }))}
-                  >
-                    <option value="front">Front</option>
-                    <option value="back">Back</option>
-                    <option value="left">Left</option>
-                    <option value="right">Right</option>
-                  </select>
-                </div>
-                <div className="flex gap-1 mb-1">
-                  <label className="text-slate-400 w-14 shrink-0 pt-0.5">Width (ft)</label>
-                  <input
-                    type="number" min={2} max={6} step={0.5}
-                    className="flex-1 bg-slate-800 text-white rounded text-[10px] px-1 py-0.5 border border-slate-700"
-                    value={newDoor.width}
-                    onChange={e => setNewDoor(p => ({ ...p, width: parseFloat(e.target.value) || 3 }))}
-                  />
-                </div>
-                <div className="flex gap-1 mb-2">
-                  <label className="text-slate-400 w-14 shrink-0 pt-0.5">Opens</label>
-                  <select
-                    className="flex-1 bg-slate-800 text-white rounded text-[10px] px-1 py-0.5 border border-slate-700"
-                    value={newDoor.openDirection}
-                    onChange={e => setNewDoor(p => ({ ...p, openDirection: e.target.value as typeof p.openDirection }))}
-                  >
-                    <option value="in-left">In Left</option>
-                    <option value="in-right">In Right</option>
-                    <option value="out-left">Out Left</option>
-                    <option value="out-right">Out Right</option>
-                  </select>
-                </div>
-                <div className="flex gap-1">
-                  <button onClick={handleAddDoor} className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold rounded py-1 text-[10px]">Add</button>
-                  <button onClick={() => setAddingDoor(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white rounded py-1 text-[10px]">Cancel</button>
+              <div className="bg-slate-900/90 border border-amber-500/30 rounded-lg p-3 mb-3 text-xs">
+                <p className="text-amber-400 font-bold mb-3 text-[11px] uppercase tracking-wide">New Door</p>
+                <div className="flex flex-col gap-2">
+                  <div>
+                    <label className="text-slate-400 block mb-1 text-[11px]">Wall Side</label>
+                    <select className="w-full bg-slate-800 text-white rounded-md text-xs px-2 py-1.5 border border-slate-600" value={newDoor.side} onChange={e => setNewDoor(p => ({ ...p, side: e.target.value as typeof p.side }))}>
+                      <option value="front">Front Wall</option>
+                      <option value="back">Back Wall</option>
+                      <option value="left">Left Wall</option>
+                      <option value="right">Right Wall</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 block mb-1 text-[11px]">Width (ft)</label>
+                    <input type="number" min={2} max={6} step={0.5} className="w-full bg-slate-800 text-white rounded-md text-xs px-2 py-1.5 border border-slate-600" value={newDoor.width} onChange={e => setNewDoor(p => ({ ...p, width: parseFloat(e.target.value) || 3 }))} />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 block mb-1 text-[11px]">Open Direction</label>
+                    <select className="w-full bg-slate-800 text-white rounded-md text-xs px-2 py-1.5 border border-slate-600" value={newDoor.openDirection} onChange={e => setNewDoor(p => ({ ...p, openDirection: e.target.value as typeof p.openDirection }))}>
+                      <option value="in-left">In — Left swing</option>
+                      <option value="in-right">In — Right swing</option>
+                      <option value="out-left">Out — Left swing</option>
+                      <option value="out-right">Out — Right swing</option>
+                    </select>
+                  </div>
+                  <div className="flex gap-2 mt-1">
+                    <button onClick={handleAddDoor} className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold rounded-md py-1.5 text-xs transition">✓ Add Door</button>
+                    <button onClick={() => setAddingDoor(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white rounded-md py-1.5 text-xs transition">Cancel</button>
+                  </div>
                 </div>
               </div>
             )}
 
             {/* Existing Doors List */}
             {selectedRoom.doors.map((d, idx) => (
-              <div key={d.id} className="mb-1 bg-slate-900/50 border border-slate-800 rounded p-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-amber-300">D{idx + 1} · {d.side} · {d.width}ft</span>
+              <div key={d.id} className="mb-2 bg-slate-900/60 border border-slate-700 rounded-lg p-2.5">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-mono font-bold text-amber-300">D{idx + 1} — {d.side.toUpperCase()} wall</span>
                   <div className="flex gap-1">
-                    <button
-                      className="text-[9px] text-slate-400 hover:text-cyan-400 px-1"
-                      onClick={() => setEditingDoorId(editingDoorId === d.id ? null : d.id)}
-                    >✏️</button>
-                    <button
-                      className="text-[9px] text-slate-400 hover:text-red-400 px-1"
-                      onClick={() => handleDeleteDoor(d.id)}
-                    >🗑</button>
+                    <button className="w-6 h-6 flex items-center justify-center rounded bg-slate-700 hover:bg-cyan-900 text-slate-400 hover:text-cyan-300 text-xs transition" onClick={() => setEditingDoorId(editingDoorId === d.id ? null : d.id)} title="Edit">✏</button>
+                    <button className="w-6 h-6 flex items-center justify-center rounded bg-slate-700 hover:bg-red-900 text-slate-400 hover:text-red-300 text-xs transition" onClick={() => handleDeleteDoor(d.id)} title="Delete">✕</button>
                   </div>
                 </div>
-                <div className="text-[9px] text-slate-500 font-mono">offset: {d.offset}ft · {d.openDirection}</div>
+                <div className="text-[11px] text-slate-400 font-mono flex gap-3">
+                  <span>Width: <span className="text-white">{d.width}ft</span></span>
+                  <span>Offset: <span className="text-white">{d.offset}ft</span></span>
+                </div>
+                <div className="text-[10px] text-slate-500 font-mono mt-0.5">{d.openDirection}</div>
 
                 {/* Edit inline */}
                 {editingDoorId === d.id && (
@@ -1297,68 +1293,61 @@ export default function DrawingViewport({
               </div>
             ))}
             {selectedRoom.doors.length === 0 && !addingDoor && (
-              <p className="text-[9px] text-slate-600 font-mono italic pb-1">No doors. Click + Add Door.</p>
+              <p className="text-xs text-slate-500 font-mono italic pb-1 text-center py-2">No doors yet — click &quot;+ Add Door&quot;</p>
             )}
           </div>
 
           {/* ── WINDOWS ── */}
-          <div className="px-3 pt-1 pb-2 border-t border-slate-800">
-            <div className="flex items-center justify-between mb-1 mt-2">
-              <span className="text-[10px] font-bold font-mono text-sky-400 uppercase">Windows ({selectedRoom.windows.length})</span>
+          <div className="px-4 pt-2 pb-3 border-t border-slate-800">
+            <div className="flex items-center justify-between mb-2 mt-2">
+              <span className="text-xs font-bold font-mono text-sky-400 uppercase tracking-wide">🪟 Windows ({selectedRoom.windows.length})</span>
               <button
-                className="text-[9px] bg-sky-500/20 hover:bg-sky-500/40 text-sky-300 px-2 py-0.5 rounded font-mono"
+                className="text-xs bg-sky-500/20 hover:bg-sky-500/40 text-sky-300 px-3 py-1 rounded-md font-semibold border border-sky-500/30 transition"
                 onClick={() => { setAddingWindow(!addingWindow); setAddingDoor(false); }}
               >+ Add Window</button>
             </div>
 
             {/* Add Window Form */}
             {addingWindow && (
-              <div className="bg-slate-900/80 border border-sky-500/20 rounded p-2 mb-2 text-[10px]">
-                <div className="flex gap-1 mb-1">
-                  <label className="text-slate-400 w-14 shrink-0 pt-0.5">Side</label>
-                  <select
-                    className="flex-1 bg-slate-800 text-white rounded text-[10px] px-1 py-0.5 border border-slate-700"
-                    value={newWindow.side}
-                    onChange={e => setNewWindow(p => ({ ...p, side: e.target.value as typeof p.side }))}
-                  >
-                    <option value="front">Front</option>
-                    <option value="back">Back</option>
-                    <option value="left">Left</option>
-                    <option value="right">Right</option>
-                  </select>
-                </div>
-                <div className="flex gap-1 mb-2">
-                  <label className="text-slate-400 w-14 shrink-0 pt-0.5">Width (ft)</label>
-                  <input type="number" min={2} max={8} step={0.5}
-                    className="flex-1 bg-slate-800 text-white rounded text-[10px] px-1 py-0.5 border border-slate-700"
-                    value={newWindow.width}
-                    onChange={e => setNewWindow(p => ({ ...p, width: parseFloat(e.target.value) || 4 }))}
-                  />
-                </div>
-                <div className="flex gap-1">
-                  <button onClick={handleAddWindow} className="flex-1 bg-sky-500 hover:bg-sky-400 text-slate-900 font-bold rounded py-1 text-[10px]">Add</button>
-                  <button onClick={() => setAddingWindow(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white rounded py-1 text-[10px]">Cancel</button>
+              <div className="bg-slate-900/90 border border-sky-500/30 rounded-lg p-3 mb-3 text-xs">
+                <p className="text-sky-400 font-bold mb-3 text-[11px] uppercase tracking-wide">New Window</p>
+                <div className="flex flex-col gap-2">
+                  <div>
+                    <label className="text-slate-400 block mb-1 text-[11px]">Wall Side</label>
+                    <select className="w-full bg-slate-800 text-white rounded-md text-xs px-2 py-1.5 border border-slate-600" value={newWindow.side} onChange={e => setNewWindow(p => ({ ...p, side: e.target.value as typeof p.side }))}>
+                      <option value="front">Front Wall</option>
+                      <option value="back">Back Wall</option>
+                      <option value="left">Left Wall</option>
+                      <option value="right">Right Wall</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 block mb-1 text-[11px]">Width (ft)</label>
+                    <input type="number" min={2} max={8} step={0.5} className="w-full bg-slate-800 text-white rounded-md text-xs px-2 py-1.5 border border-slate-600" value={newWindow.width} onChange={e => setNewWindow(p => ({ ...p, width: parseFloat(e.target.value) || 4 }))} />
+                  </div>
+                  <div className="flex gap-2 mt-1">
+                    <button onClick={handleAddWindow} className="flex-1 bg-sky-500 hover:bg-sky-400 text-slate-900 font-bold rounded-md py-1.5 text-xs transition">✓ Add Window</button>
+                    <button onClick={() => setAddingWindow(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white rounded-md py-1.5 text-xs transition">Cancel</button>
+                  </div>
                 </div>
               </div>
             )}
 
             {/* Existing Windows List */}
             {selectedRoom.windows.map((w, idx) => (
-              <div key={w.id} className="mb-1 bg-slate-900/50 border border-slate-800 rounded p-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-sky-300">W{idx + 1} · {w.side} · {w.width}ft</span>
+              <div key={w.id} className="mb-2 bg-slate-900/60 border border-slate-700 rounded-lg p-2.5">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-mono font-bold text-sky-300">W{idx + 1} — {w.side.toUpperCase()} wall</span>
                   <div className="flex gap-1">
-                    <button
-                      className="text-[9px] text-slate-400 hover:text-cyan-400 px-1"
-                      onClick={() => setEditingWindowId(editingWindowId === w.id ? null : w.id)}
-                    >✏️</button>
-                    <button
-                      className="text-[9px] text-slate-400 hover:text-red-400 px-1"
-                      onClick={() => handleDeleteWindow(w.id)}
-                    >🗑</button>
+                    <button className="w-6 h-6 flex items-center justify-center rounded bg-slate-700 hover:bg-cyan-900 text-slate-400 hover:text-cyan-300 text-xs transition" onClick={() => setEditingWindowId(editingWindowId === w.id ? null : w.id)} title="Edit">✏</button>
+                    <button className="w-6 h-6 flex items-center justify-center rounded bg-slate-700 hover:bg-red-900 text-slate-400 hover:text-red-300 text-xs transition" onClick={() => handleDeleteWindow(w.id)} title="Delete">✕</button>
                   </div>
                 </div>
-                <div className="text-[9px] text-slate-500 font-mono">offset: {w.offset}ft · drag to reposition</div>
+                <div className="text-[11px] text-slate-400 font-mono flex gap-3">
+                  <span>Width: <span className="text-white">{w.width}ft</span></span>
+                  <span>Offset: <span className="text-white">{w.offset}ft</span></span>
+                </div>
+                <div className="text-[10px] text-slate-500 font-mono mt-0.5">drag on canvas to reposition</div>
 
                 {/* Edit inline */}
                 {editingWindowId === w.id && (
@@ -1397,13 +1386,14 @@ export default function DrawingViewport({
               </div>
             ))}
             {selectedRoom.windows.length === 0 && !addingWindow && (
-              <p className="text-[9px] text-slate-600 font-mono italic pb-1">No windows. Click + Add Window.</p>
+              <p className="text-xs text-slate-500 font-mono italic pb-1 text-center py-2">No windows yet — click &quot;+ Add Window&quot;</p>
             )}
           </div>
 
           {/* Tip */}
-          <div className="px-3 py-1.5 border-t border-slate-800 bg-slate-950/40 text-[9px] text-slate-600 font-mono">
-            💡 Drag doors/windows on canvas to reposition
+          <div className="px-4 py-2.5 border-t border-slate-800 bg-slate-950/60 text-[11px] text-slate-500 font-mono flex items-center gap-2">
+            <span>💡</span>
+            <span>Drag doors/windows on canvas to reposition</span>
           </div>
         </div>
       )}
