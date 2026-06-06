@@ -55,17 +55,19 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [geminiKey, setGeminiKey] = useState('');
 
   useEffect(() => {
-    setMounted(true);
-    const p = getProject(id);
-    if (p) {
-      setProject(p);
-      if (p.layoutOptions) {
-        setLayoutOptions(p.layoutOptions);
-        setSelectedLayoutId(p.selectedLayoutId || 'option-a');
+    (async () => {
+      const p = await getProject(id);
+      if (p) {
+        setProject(p);
+        if (p.layoutOptions) {
+          setLayoutOptions(p.layoutOptions);
+          setSelectedLayoutId(p.selectedLayoutId || 'option-a');
+        }
       }
-    }
-    const key = localStorage.getItem('ARCH_COPILOT_GEMINI_KEY') || '';
-    setGeminiKey(key);
+      const key = localStorage.getItem('ARCH_COPILOT_GEMINI_KEY') || '';
+      setGeminiKey(key);
+      setMounted(true);
+    })();
   }, [id]);
 
   const generateDesign = async () => {
@@ -150,7 +152,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           spaceAllocation,
         },
       };
-      saveProject(updated);
+      await saveProject(updated);
       setProject(updated);
       setGenStep('');
       setActiveTab('overview');

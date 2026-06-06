@@ -26,27 +26,29 @@ export default function DashboardPage() {
   const router = useRouter();
 
   useEffect(() => {
-    const u = getCurrentUser();
-    if (!u) {
-      router.replace('/?auth=signin');
-      return;
-    }
-    setUser(u);
-    setProjects(getProjects());
-    setMounted(true);
+    (async () => {
+      const u = await getCurrentUser();
+      if (!u) {
+        router.replace('/?auth=signin');
+        return;
+      }
+      setUser(u);
+      setProjects(await getProjects());
+      setMounted(true);
+    })();
   }, [router]);
 
-  const handleDelete = (id: string, e: React.MouseEvent) => {
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (confirm('Delete this project?')) {
-      deleteProject(id);
-      setProjects(getProjects());
+      await deleteProject(id);
+      setProjects(await getProjects());
     }
   };
 
-  const handleSignOut = () => {
-    signOut();
+  const handleSignOut = async () => {
+    await signOut();
     router.push('/');
   };
 

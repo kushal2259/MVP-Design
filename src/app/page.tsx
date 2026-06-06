@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { signIn, signUp, resetPassword, getCurrentUser } from '@/lib/store';
+import { signIn, signUp, sendPasswordReset, getCurrentUser } from '@/lib/store';
 
 const FEATURES = [
   { icon: '⬡', title: 'AI Requirement Analysis', desc: 'Natural language to structured architectural data in seconds' },
@@ -34,6 +34,7 @@ function HomePageInner() {
   const [mounted, setMounted] = useState(false);
   const [modal, setModal] = useState<ModalMode>(null);
   const [user, setUser] = useState<{ name: string } | null>(null);
+  const [busy, setBusy] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -51,16 +52,17 @@ function HomePageInner() {
 
   // Forgot password form
   const [fpEmail, setFpEmail] = useState('');
-  const [fpNew, setFpNew] = useState('');
   const [fpMsg, setFpMsg] = useState('');
 
   useEffect(() => {
     setMounted(true);
-    const u = getCurrentUser();
-    if (u) { setUser(u); return; }
-    const auth = searchParams.get('auth');
-    if (auth === 'signin') setModal('signin');
-    else if (auth === 'signup') setModal('signup');
+    (async () => {
+      const u = await getCurrentUser();
+      if (u) { setUser(u); return; }
+      const auth = searchParams.get('auth');
+      if (auth === 'signin') setModal('signin');
+      else if (auth === 'signup') setModal('signup');
+    })();
   }, [searchParams]);
 
   const openModal = (mode: ModalMode) => {
@@ -68,34 +70,45 @@ function HomePageInner() {
     setModal(mode);
   };
 
-  const handleSignIn = (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = signIn(siEmail, siPass);
+    setBusy(true);
+    const res = await signIn(siEmail, siPass);
+    setBusy(false);
     if (!res.ok) { setSiError(res.error || 'Error'); return; }
-    const u = getCurrentUser();
+    const u = await getCurrentUser();
     setUser(u);
     setModal(null);
     router.push('/dashboard');
   };
 
-  const handleSignUp = (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (suPass !== suPass2) { setSuError('Passwords do not match'); return; }
     if (suPass.length < 6) { setSuError('Password must be at least 6 characters'); return; }
-    const res = signUp(suName, suEmail, suPass);
+    setBusy(true);
+    const res = await signUp(suName, suEmail, suPass);
+    setBusy(false);
     if (!res.ok) { setSuError(res.error || 'Error'); return; }
-    const u = getCurrentUser();
+    if (res.needsConfirmation) {
+      setSuError('');
+      setModal('signin');
+      setSiError('✓ Account created! Please check your email to confirm, then sign in.');
+      return;
+    }
+    const u = await getCurrentUser();
     setUser(u);
     setModal(null);
     router.push('/dashboard');
   };
 
-  const handleForgot = (e: React.FormEvent) => {
+  const handleForgot = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (fpNew.length < 6) { setFpMsg('Password must be at least 6 characters'); return; }
-    const res = resetPassword(fpEmail, fpNew);
+    setBusy(true);
+    const res = await sendPasswordReset(fpEmail);
+    setBusy(false);
     if (!res.ok) { setFpMsg(res.error || 'Error'); return; }
-    setFpMsg('✓ Password reset successfully! You can now sign in.');
+    setFpMsg('✓ Password reset link sent! Check your email inbox.');
   };
 
   return (
@@ -137,9 +150,9 @@ function HomePageInner() {
                     <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Password</label>
                     <input type="password" required style={inputStyle} value={siPass} onChange={e => setSiPass(e.target.value)} placeholder="••••••••" />
                   </div>
-                  {siError && <p style={{ color: '#dc2626', fontSize: 12, margin: 0 }}>{siError}</p>}
-                  <button type="submit" style={{ padding: '11px', borderRadius: 6, backgroundColor: 'var(--blueprint)', color: 'white', border: 'none', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4 }}>
-                    Sign In →
+                  {siError && <p style={{ color: siError.startsWith('✓') ? '#16a34a' : '#dc2626', fontSize: 12, margin: 0 }}>{siError}</p>}
+                  <button type="submit" disabled={busy} style={{ padding: '11px', borderRadius: 6, backgroundColor: 'var(--blueprint)', color: 'white', border: 'none', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4, opacity: busy ? 0.7 : 1 }}>
+                    {busy ? 'Signing in…' : 'Sign In →'}
                   </button>
                 </form>
                 <div style={{ marginTop: 20, display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
@@ -174,8 +187,8 @@ function HomePageInner() {
                     <input type="password" required style={inputStyle} value={suPass2} onChange={e => setSuPass2(e.target.value)} placeholder="••••••••" />
                   </div>
                   {suError && <p style={{ color: '#dc2626', fontSize: 12, margin: 0 }}>{suError}</p>}
-                  <button type="submit" style={{ padding: '11px', borderRadius: 6, backgroundColor: 'var(--amber)', color: 'white', border: 'none', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4 }}>
-                    Create Account →
+                  <button type="submit" disabled={busy} style={{ padding: '11px', borderRadius: 6, backgroundColor: 'var(--amber)', color: 'white', border: 'none', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4, opacity: busy ? 0.7 : 1 }}>
+                    {busy ? 'Creating…' : 'Create Account →'}
                   </button>
                 </form>
                 <p style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--steel)' }}>
@@ -189,19 +202,15 @@ function HomePageInner() {
             {modal === 'forgot' && (
               <>
                 <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 400, marginBottom: 6 }}>Reset Password</h2>
-                <p style={{ color: 'var(--steel)', fontSize: 13, marginBottom: 28 }}>Enter your email and choose a new password</p>
+                <p style={{ color: 'var(--steel)', fontSize: 13, marginBottom: 28 }}>Enter your email — we&apos;ll send you a secure reset link</p>
                 <form onSubmit={handleForgot} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Email</label>
                     <input type="email" required style={inputStyle} value={fpEmail} onChange={e => setFpEmail(e.target.value)} placeholder="you@example.com" />
                   </div>
-                  <div>
-                    <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>New Password</label>
-                    <input type="password" required style={inputStyle} value={fpNew} onChange={e => setFpNew(e.target.value)} placeholder="At least 6 characters" />
-                  </div>
                   {fpMsg && <p style={{ color: fpMsg.startsWith('✓') ? '#16a34a' : '#dc2626', fontSize: 12, margin: 0 }}>{fpMsg}</p>}
-                  <button type="submit" style={{ padding: '11px', borderRadius: 6, backgroundColor: 'var(--blueprint)', color: 'white', border: 'none', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4 }}>
-                    Reset Password
+                  <button type="submit" disabled={busy} style={{ padding: '11px', borderRadius: 6, backgroundColor: 'var(--blueprint)', color: 'white', border: 'none', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4, opacity: busy ? 0.7 : 1 }}>
+                    {busy ? 'Sending…' : 'Send Reset Link'}
                   </button>
                 </form>
                 <p style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--steel)' }}>

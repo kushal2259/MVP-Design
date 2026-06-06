@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { saveProject, generateId } from '@/lib/store';
+import { saveProject, generateId, getCurrentUser } from '@/lib/store';
 import type { ProjectRequirements, Project } from '@/types';
 
 const STYLES = ['modern', 'contemporary', 'traditional', 'mediterranean', 'minimalist'] as const;
@@ -60,7 +60,20 @@ export default function NewProjectPage() {
     if (validate()) setStep(s => Math.min(s + 1, 4) as Step);
   };
 
-  const handleSubmit = () => {
+  const [submitting, setSubmitting] = useState(false);
+
+  // Require auth to create a project
+  useEffect(() => {
+    (async () => {
+      const u = await getCurrentUser();
+      if (!u) router.replace('/?auth=signin');
+    })();
+  }, [router]);
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    const user = await getCurrentUser();
+    if (!user) { router.replace('/?auth=signin'); return; }
     const project: Project = {
       id: generateId(),
       name: name || `${req.bhk} BHK at ${req.location}`,
@@ -68,7 +81,7 @@ export default function NewProjectPage() {
       status: 'requirements',
       createdAt: new Date().toISOString(),
     };
-    saveProject(project);
+    await saveProject(project);
     router.push(`/project/${project.id}`);
   };
 
@@ -515,14 +528,15 @@ export default function NewProjectPage() {
                 Continue →
               </button>
             ) : (
-              <button onClick={handleSubmit} style={{
+              <button onClick={handleSubmit} disabled={submitting} style={{
                 padding: '12px 40px', borderRadius: 4,
                 backgroundColor: 'var(--amber)', color: 'white',
                 border: 'none', fontSize: 15, cursor: 'pointer',
                 fontFamily: 'var(--font-body)', fontWeight: 500,
                 boxShadow: '0 4px 20px rgba(200,133,58,0.3)',
+                opacity: submitting ? 0.7 : 1,
               }}>
-                Generate Design Package →
+                {submitting ? 'Creating…' : 'Generate Design Package →'}
               </button>
             )}
           </div>
