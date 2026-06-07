@@ -272,9 +272,9 @@ function HomePageInner() {
         }}>
           {/* soft glow behind */}
           <div style={{
-            position: 'absolute', width: '90%', height: '70%', borderRadius: '50%',
-            background: 'radial-gradient(circle, rgba(200,133,58,0.16), rgba(74,114,196,0.06) 55%, transparent 72%)',
-            filter: 'blur(10px)',
+            position: 'absolute', width: '92%', height: '78%', borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(200,133,58,0.18), rgba(74,114,196,0.07) 55%, transparent 72%)',
+            filter: 'blur(12px)',
           }} />
           <div style={{ position: 'relative', animation: 'floaty 8s ease-in-out infinite', display: 'inline-block' }}>
             <img
@@ -283,15 +283,13 @@ function HomePageInner() {
               style={{
                 display: 'block',
                 width: 'auto', height: 'auto',
-                maxHeight: '78vh', maxWidth: '100%',
-                borderRadius: 16,
-                boxShadow: '0 30px 70px rgba(26,39,68,0.28), 0 8px 20px rgba(0,0,0,0.12)',
-                border: '1px solid rgba(255,255,255,0.5)',
+                maxHeight: '80vh', maxWidth: '100%',
+                mixBlendMode: 'multiply',
               }}
             />
             {/* floating spec chip */}
             <div style={{
-              position: 'absolute', bottom: 16, left: 16,
+              position: 'absolute', bottom: 24, left: 0,
               backgroundColor: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(8px)',
               borderRadius: 10, padding: '10px 16px',
               boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
@@ -299,8 +297,8 @@ function HomePageInner() {
             }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: 'var(--amber)' }} />
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', lineHeight: 1.2 }}>Contemporary Villa</div>
-                <div style={{ fontSize: 10, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>AI-generated concept</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', lineHeight: 1.2 }}>Modern Villa Concept</div>
+                <div style={{ fontSize: 10, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>AI-generated 3D model</div>
               </div>
             </div>
           </div>
