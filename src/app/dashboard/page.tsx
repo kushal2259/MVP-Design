@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getProjects, deleteProject, getCurrentUser, signOut } from '@/lib/store';
+import { useIsMobile } from '@/lib/useIsMobile';
 import type { Project } from '@/types';
 
 function StatusBadge({ status }: { status: Project['status'] }) {
@@ -24,6 +25,7 @@ export default function DashboardPage() {
   const [mounted, setMounted] = useState(false);
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
   const router = useRouter();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     (async () => {
@@ -67,8 +69,8 @@ export default function DashboardPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: 'var(--paper)', fontFamily: 'var(--font-body)' }}>
       {/* Header */}
-      <div style={{ borderBottom: '1px solid var(--line)', padding: '0 48px', height: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'var(--paper)', position: 'sticky', top: 0, zIndex: 50 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+      <div style={{ borderBottom: '1px solid var(--line)', padding: isMobile ? '0 16px' : '0 48px', height: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'var(--paper)', position: 'sticky', top: 0, zIndex: 50 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 24 }}>
           <Link href="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
             <svg width="24" height="24" viewBox="0 0 28 28" fill="none">
               <rect x="2" y="2" width="24" height="24" rx="2" stroke="var(--blueprint)" strokeWidth="1.5"/>
@@ -76,11 +78,11 @@ export default function DashboardPage() {
             </svg>
             <span style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--ink)' }}>ArchCopilot</span>
           </Link>
-          <span style={{ color: 'var(--line-strong)', fontSize: 18 }}>|</span>
-          <span style={{ fontSize: 14, color: 'var(--steel)', fontWeight: 300 }}>My Projects</span>
+          {!isMobile && <span style={{ color: 'var(--line-strong)', fontSize: 18 }}>|</span>}
+          {!isMobile && <span style={{ fontSize: 14, color: 'var(--steel)', fontWeight: 300 }}>My Projects</span>}
         </div>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          {user && (
+        <div style={{ display: 'flex', gap: isMobile ? 8 : 12, alignItems: 'center' }}>
+          {user && !isMobile && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: 'var(--blueprint)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 13, fontWeight: 600 }}>
                 {user.name.charAt(0).toUpperCase()}
@@ -91,26 +93,31 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
-          <Link href="/project/new" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 20px', borderRadius: 4, backgroundColor: 'var(--blueprint)', color: 'white', textDecoration: 'none', fontSize: 14, fontWeight: 500 }}>
-            + New Project
+          {user && isMobile && (
+            <div style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: 'var(--blueprint)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 13, fontWeight: 600 }}>
+              {user.name.charAt(0).toUpperCase()}
+            </div>
+          )}
+          <Link href="/project/new" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: isMobile ? '8px 12px' : '8px 20px', borderRadius: 4, backgroundColor: 'var(--blueprint)', color: 'white', textDecoration: 'none', fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap' }}>
+            {isMobile ? '+ New' : '+ New Project'}
           </Link>
-          <button onClick={handleSignOut} style={{ padding: '8px 16px', borderRadius: 4, border: '1px solid var(--line-strong)', backgroundColor: 'transparent', color: 'var(--steel)', fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
-            Sign Out
+          <button onClick={handleSignOut} style={{ padding: '8px 12px', borderRadius: 4, border: '1px solid var(--line-strong)', backgroundColor: 'transparent', color: 'var(--steel)', fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)', whiteSpace: 'nowrap' }}>
+            {isMobile ? 'Out' : 'Sign Out'}
           </button>
         </div>
       </div>
 
-      <div style={{ padding: '48px', maxWidth: 1200, margin: '0 auto' }}>
+      <div style={{ padding: isMobile ? '24px 16px' : '48px', maxWidth: 1200, margin: '0 auto' }}>
         {/* Summary bar */}
-        <div style={{ display: 'flex', gap: 24, marginBottom: 48 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? 12 : 24, marginBottom: isMobile ? 28 : 48 }}>
           {[
             { label: 'Total Projects', value: projects.length },
             { label: 'Generated', value: projects.filter(p => p.status === 'generated' || p.status === 'reviewing').length },
             { label: 'In Progress', value: projects.filter(p => p.status === 'analyzing' || p.status === 'planning').length },
             { label: 'Drafts', value: projects.filter(p => p.status === 'requirements').length },
           ].map((s, i) => (
-            <div key={i} style={{ flex: 1, padding: '24px', borderRadius: 6, border: '1px solid var(--line)', backgroundColor: 'white' }}>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 36, fontWeight: 600, color: 'var(--blueprint)', lineHeight: 1 }}>{s.value}</div>
+            <div key={i} style={{ flex: isMobile ? '1 1 40%' : 1, minWidth: isMobile ? 130 : 'auto', padding: isMobile ? '18px' : '24px', borderRadius: 6, border: '1px solid var(--line)', backgroundColor: 'white' }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: isMobile ? 28 : 36, fontWeight: 600, color: 'var(--blueprint)', lineHeight: 1 }}>{s.value}</div>
               <div style={{ fontSize: 13, color: 'var(--steel)', marginTop: 8, fontWeight: 300 }}>{s.label}</div>
             </div>
           ))}
@@ -130,7 +137,7 @@ export default function DashboardPage() {
             </Link>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: isMobile ? 16 : 24 }}>
             {projects.map((project) => (
               <Link key={project.id} href={`/project/${project.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
                 <div

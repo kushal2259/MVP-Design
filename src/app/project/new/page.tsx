@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { saveProject, generateId, getCurrentUser } from '@/lib/store';
+import { useIsMobile } from '@/lib/useIsMobile';
 import type { ProjectRequirements, Project } from '@/types';
 
 const STYLES = ['modern', 'contemporary', 'traditional', 'mediterranean', 'minimalist'] as const;
@@ -12,6 +13,7 @@ type Step = 1 | 2 | 3 | 4;
 
 export default function NewProjectPage() {
   const router = useRouter();
+  const isMobile = useIsMobile();
   const [step, setStep] = useState<Step>(1);
   const [name, setName] = useState('');
   const [req, setReq] = useState<ProjectRequirements>({
@@ -113,7 +115,7 @@ export default function NewProjectPage() {
     <div style={{ minHeight: '100vh', backgroundColor: 'var(--paper)', fontFamily: 'var(--font-body)', display: 'flex', flexDirection: 'column' }}>
       {/* Nav */}
       <div style={{
-        borderBottom: '1px solid var(--line)', padding: '0 48px', height: 64,
+        borderBottom: '1px solid var(--line)', padding: isMobile ? '0 16px' : '0 48px', height: 64,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         backgroundColor: 'var(--paper)',
       }}>
@@ -124,16 +126,16 @@ export default function NewProjectPage() {
           </svg>
           <span style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, color: 'var(--ink)' }}>ArchCopilot</span>
         </Link>
-        <span style={{ fontSize: 13, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>New Project — Step {step} of 4</span>
+        <span style={{ fontSize: 13, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>Step {step} of 4</span>
       </div>
 
       <div style={{ flex: 1, display: 'flex' }}>
-        {/* Left sidebar: steps */}
+        {/* Left sidebar: steps (hidden on mobile — nav shows current step) */}
         <div style={{
           width: 280, borderRight: '1px solid var(--line)',
           padding: '48px 32px',
           backgroundColor: 'white',
-          display: 'flex', flexDirection: 'column', gap: 8,
+          display: isMobile ? 'none' : 'flex', flexDirection: 'column', gap: 8,
         }}>
           {[
             { n: 1, title: 'Plot & Location', desc: 'Site dimensions and address' },
@@ -181,7 +183,7 @@ export default function NewProjectPage() {
         </div>
 
         {/* Main form area */}
-        <div style={{ flex: 1, padding: '48px 64px', overflowY: 'auto', maxWidth: 720 }}>
+        <div style={{ flex: 1, padding: isMobile ? '28px 18px' : '48px 64px', overflowY: 'auto', maxWidth: 720 }}>
           {/* Step 1 */}
           {step === 1 && (
             <div style={{ animation: 'fadeUp 0.4s ease' }}>

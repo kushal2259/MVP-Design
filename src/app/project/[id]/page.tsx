@@ -11,6 +11,7 @@ import { analyzeVastu, DIRECTION_NAMES } from '@/lib/vastuEngine';
 import { analyzeByelaws } from '@/lib/byelawEngine';
 import { generateDetailedBOQ, calcEMI, formatINR, boqToCSV, type Tier } from '@/lib/costEngine';
 import { analyzeSunVent } from '@/lib/sunPathEngine';
+import { useIsMobile } from '@/lib/useIsMobile';
 import type { Project, ActiveTab, FloorPlan, PlotSettings, LayoutOption } from '@/types';
 import dynamic from 'next/dynamic';
 
@@ -59,6 +60,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [layoutOptions, setLayoutOptions] = useState<LayoutOption[] | null>(null);
   const [selectedLayoutId, setSelectedLayoutId] = useState<'option-a' | 'option-b' | 'option-c'>('option-a');
   const [geminiKey, setGeminiKey] = useState('');
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     (async () => {
@@ -186,7 +188,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       <div style={{
         height: 56, borderBottom: '1px solid var(--line)',
         display: 'flex', alignItems: 'center',
-        padding: '0 24px', gap: 16,
+        padding: isMobile ? '0 14px' : '0 24px', gap: isMobile ? 10 : 16,
         backgroundColor: 'white',
         position: 'sticky', top: 0, zIndex: 100,
       }}>
@@ -206,34 +208,38 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </div>
         {isGenerated && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              type="text"
-              placeholder="Gemini API key (optional — for AI chat)"
-              value={geminiKey}
-              title={geminiKey ? 'AI features enabled' : 'Optional: add a Gemini API key to enable the AI Copilot chat and smarter analysis. Plans generate fine without it.'}
-              onChange={e => {
-                setGeminiKey(e.target.value);
-                localStorage.setItem('ARCH_COPILOT_GEMINI_KEY', e.target.value);
-              }}
-              style={{
-                padding: '5px 10px', borderRadius: 4,
-                border: `1.5px solid ${geminiKey ? '#16a34a' : 'var(--line-strong)'}`,
-                fontSize: 12, width: 220,
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--steel)',
-              }}
-            />
-            <span title="AI Copilot status" style={{ fontSize: 11, color: geminiKey ? '#16a34a' : 'var(--steel)', whiteSpace: 'nowrap' }}>
-              {geminiKey ? '✓ AI on' : '○ AI off'}
-            </span>
+            {!isMobile && (
+              <>
+                <input
+                  type="text"
+                  placeholder="Gemini API key (optional — for AI chat)"
+                  value={geminiKey}
+                  title={geminiKey ? 'AI features enabled' : 'Optional: add a Gemini API key to enable the AI Copilot chat and smarter analysis. Plans generate fine without it.'}
+                  onChange={e => {
+                    setGeminiKey(e.target.value);
+                    localStorage.setItem('ARCH_COPILOT_GEMINI_KEY', e.target.value);
+                  }}
+                  style={{
+                    padding: '5px 10px', borderRadius: 4,
+                    border: `1.5px solid ${geminiKey ? '#16a34a' : 'var(--line-strong)'}`,
+                    fontSize: 12, width: 220,
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--steel)',
+                  }}
+                />
+                <span title="AI Copilot status" style={{ fontSize: 11, color: geminiKey ? '#16a34a' : 'var(--steel)', whiteSpace: 'nowrap' }}>
+                  {geminiKey ? '✓ AI on' : '○ AI off'}
+                </span>
+              </>
+            )}
             <button onClick={() => setActiveTab('export')} style={{
-              padding: '6px 16px', borderRadius: 4,
+              padding: isMobile ? '6px 12px' : '6px 16px', borderRadius: 4,
               border: '1.5px solid var(--blueprint)',
               background: 'var(--blueprint)', color: 'white',
-              fontSize: 13, cursor: 'pointer',
+              fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
               fontFamily: 'var(--font-body)', fontWeight: 500,
             }}>
-              ⬇ Export / Download
+              {isMobile ? '⬇ Export' : '⬇ Export / Download'}
             </button>
           </div>
         )}
@@ -323,9 +329,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </div>
       ) : (
         /* Generated: tabbed view */
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-          {/* Left sidebar tabs */}
-          <div style={{
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', flex: 1, overflow: 'hidden' }}>
+          {/* Left sidebar tabs (horizontal scroll bar on mobile) */}
+          <div style={isMobile ? {
+            width: '100%', borderBottom: '1px solid var(--line)',
+            backgroundColor: 'white', flexShrink: 0,
+            display: 'flex', flexDirection: 'row', overflowX: 'auto', whiteSpace: 'nowrap',
+          } : {
             width: 210, borderRight: '1px solid var(--line)',
             backgroundColor: 'white', flexShrink: 0,
             overflowY: 'auto', paddingTop: 8,
@@ -335,14 +345,24 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               const seen = new Set<string>();
               TABS.forEach(t => { const g = t.group || ''; if (!seen.has(g)) { seen.add(g); groups.push(g); } });
               return groups.map(group => (
-                <div key={group}>
-                  {group && (
+                <div key={group} style={isMobile ? { display: 'inline-flex' } : undefined}>
+                  {group && !isMobile && (
                     <div style={{ padding: '10px 20px 4px', fontSize: 9, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
                       {group}
                     </div>
                   )}
                   {TABS.filter(t => (t.group || '') === group).map(tab => (
-                    <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+                    <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={isMobile ? {
+                      padding: '12px 14px', whiteSpace: 'nowrap',
+                      display: 'inline-flex', alignItems: 'center', gap: 7,
+                      backgroundColor: activeTab === tab.id ? 'rgba(26,39,68,0.07)' : 'transparent',
+                      borderTop: 'none', borderRight: 'none', borderLeft: 'none',
+                      borderBottom: `2.5px solid ${activeTab === tab.id ? 'var(--blueprint)' : 'transparent'}`,
+                      cursor: 'pointer',
+                      color: activeTab === tab.id ? 'var(--blueprint)' : 'var(--steel)',
+                      fontSize: 13, fontWeight: activeTab === tab.id ? 600 : 400,
+                      fontFamily: 'var(--font-body)',
+                    } : {
                       width: '100%', padding: '9px 20px',
                       display: 'flex', alignItems: 'center', gap: 9,
                       backgroundColor: activeTab === tab.id ? 'rgba(26,39,68,0.07)' : 'transparent',
@@ -364,7 +384,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           </div>
 
           {/* Main content area */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '32px 40px' }}>
+          <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '20px 16px' : '32px 40px' }}>
             {activeTab === 'overview' && <OverviewTab project={project} analysisData={analysisData} />}
             {activeTab === 'floor-plans' && (
               <FloorPlansTab
@@ -502,7 +522,7 @@ function VastuTab({ project, layoutOptions, selectedLayoutId }: { project: Proje
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 24 }}>
         {/* Zone map */}
         <div style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', padding: 20 }}>
           <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 14, color: 'var(--blueprint)' }}>Room → Direction Map</h3>
@@ -623,7 +643,7 @@ function OverviewTab({ project, analysisData }: { project: Project; analysisData
       <SectionTitle>Project Overview</SectionTitle>
 
       {/* Key metrics */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 40 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 140px), 1fr))', gap: 16, marginBottom: 40 }}>
         {[
           { label: 'Built-up Area', value: `${builtUp.toLocaleString()} sq.ft`, sub: `${req.plotSize} sq yd plot` },
           { label: 'Configuration', value: `${req.bhk} BHK`, sub: `${req.floors === 1 ? 'G' : `G+${req.floors - 1}`} · ${req.floors} floor${req.floors > 1 ? 's' : ''}` },
@@ -638,7 +658,7 @@ function OverviewTab({ project, analysisData }: { project: Project; analysisData
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 24 }}>
         {/* AI Analysis */}
         {analysisData && (
           <div style={{ border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white', padding: '24px' }}>
@@ -768,7 +788,7 @@ function FloorPlansTab({
       {viewMode === 'vastu' && layoutOptions && (
         <div>
           {/* 3 option cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 28 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 160px), 1fr))', gap: 16, marginBottom: 28 }}>
             {layoutOptions.map(opt => (
               <div
                 key={opt.id}
@@ -818,7 +838,7 @@ function FloorPlansTab({
                 </div>
               )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: 24 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: 24 }}>
                 <div style={{ border: '1px solid var(--line)', borderRadius: 6, overflow: 'hidden', backgroundColor: 'white', padding: 16 }}>
                   <FloorPlanV2Renderer
                     rooms={selectedLayout.rooms.filter(r => r.floor === selectedFloor)}
@@ -861,7 +881,7 @@ function FloorPlansTab({
           </div>
 
           {plan && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: 24 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: 24 }}>
               <div style={{ border: '1px solid var(--line)', borderRadius: 6, overflow: 'hidden', backgroundColor: 'white', padding: 16 }}>
                 <FloorPlanRenderer plan={plan} scale={1} />
               </div>
@@ -1185,7 +1205,7 @@ function InteriorTab({ project, interiorData, editedPlans, onPlansChange }: {
               <div style={{ flex: 1, padding: '24px 28px' }}>
                 <p style={{ fontSize: 15, lineHeight: 1.75, color: 'var(--ink)', marginBottom: 20, fontWeight: 300 }}>{c.concept}</p>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))', gap: 16 }}>
                   <div>
                     <div style={{ fontSize: 10, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Materials</div>
                     {c.materials?.map((m, mi) => (
@@ -1356,7 +1376,7 @@ function CostTab({ project }: { project: Project }) {
       </p>
 
       {/* Three tier cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 40 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 200px), 1fr))', gap: 20, marginBottom: 40 }}>
         {[
           { tier: 'Economy', value: cost.economy, color: '#16a34a', bg: '#f0fdf4', desc: 'Standard materials, functional finishes', rate: `₹${Math.round(cost.economy * 100000 / (cost.builtUp || 1)).toLocaleString()}/sq.ft` },
           { tier: 'Standard', value: cost.standard, color: 'var(--blueprint)', bg: 'rgba(26,39,68,0.04)', desc: 'Good quality materials, elegant finishes', rate: `₹${Math.round(cost.standard * 100000 / (cost.builtUp || 1)).toLocaleString()}/sq.ft`, recommended: true },
@@ -1455,7 +1475,7 @@ function IndiaCostPanel({ builtUp, location, projectName }: { builtUp: number; l
       </div>
 
       {/* Totals strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 140px), 1fr))', gap: 16, marginBottom: 24 }}>
         {[
           { label: 'Subtotal (pre-GST)', val: formatINR(cb.subtotal), c: 'var(--ink)' },
           { label: 'GST (blended)', val: formatINR(cb.gstAmount), c: '#d97706' },
@@ -1469,7 +1489,7 @@ function IndiaCostPanel({ builtUp, location, projectName }: { builtUp: number; l
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: 24 }}>
         {/* Detailed BOQ */}
         <div style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', overflow: 'hidden' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid var(--line)' }}>
@@ -1727,7 +1747,7 @@ function ByelawPanel({ project }: { project: Project }) {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 16 }}>
         {Object.entries(grouped).map(([cat, items]) => (
           <div key={cat} style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', padding: 16 }}>
             <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: 'var(--blueprint)' }}>{cat}</h4>
@@ -1790,7 +1810,7 @@ function ComplianceTab({ project, complianceData }: { project: Project; complian
         ⚠ <strong>These are estimated assumptions based on typical regulations for {req.location}.</strong> Always verify setbacks, FSI, height restrictions, and approval requirements with your local Municipal Corporation before design finalization.
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 20, marginBottom: 24 }}>
         {/* Setbacks */}
         <div style={{ border: '1px solid var(--line)', borderRadius: 6, backgroundColor: 'white', padding: '20px 24px' }}>
           <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--blueprint)' }}>Setback Requirements</h3>

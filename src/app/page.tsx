@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn, signUp, sendPasswordReset, getCurrentUser } from '@/lib/store';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 const FEATURES = [
   { icon: '⬡', title: 'AI Requirement Analysis', desc: 'Natural language to structured architectural data in seconds' },
@@ -37,6 +38,7 @@ function HomePageInner() {
   const [busy, setBusy] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isMobile = useIsMobile();
 
   // Sign in form
   const [siEmail, setSiEmail] = useState('');
@@ -226,7 +228,7 @@ function HomePageInner() {
       <nav style={{
         position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '0 48px', height: 64,
+        padding: isMobile ? '0 18px' : '0 48px', height: 64,
         borderBottom: '1px solid var(--line)',
         backgroundColor: 'rgba(245,243,238,0.92)',
         backdropFilter: 'blur(16px)',
@@ -260,10 +262,15 @@ function HomePageInner() {
       </nav>
 
       {/* Hero */}
-      <section style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'flex-start', padding: '120px 80px 80px', position: 'relative', overflow: 'hidden' }}>
+      <section style={{ minHeight: isMobile ? 'auto' : '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'flex-start', padding: isMobile ? '92px 22px 40px' : '120px 80px 80px', position: 'relative', overflow: 'hidden' }}>
         {/* Hero house photo */}
         <style>{`@keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }`}</style>
-        <div style={{
+        <div style={isMobile ? {
+          position: 'relative', width: '100%', order: -1, marginBottom: 24,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          pointerEvents: 'none',
+          opacity: mounted ? 1 : 0, transition: 'opacity 1.1s ease 0.3s',
+        } : {
           position: 'absolute', top: 0, bottom: 0, right: '3%', width: '50%',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           pointerEvents: 'none',
@@ -283,7 +290,7 @@ function HomePageInner() {
               style={{
                 display: 'block',
                 width: 'auto', height: 'auto',
-                maxHeight: '80vh', maxWidth: '100%',
+                maxHeight: isMobile ? '46vh' : '80vh', maxWidth: '100%',
                 mixBlendMode: 'multiply',
               }}
             />
@@ -330,10 +337,10 @@ function HomePageInner() {
         </div>
 
         {/* Stats bar */}
-        <div style={{ display: 'flex', gap: 0, marginTop: 80, borderTop: '1px solid var(--line)', paddingTop: 40, width: '100%', maxWidth: 600, opacity: mounted ? 1 : 0, transition: 'opacity 0.8s ease 0.5s' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? '24px 0' : 0, marginTop: isMobile ? 48 : 80, borderTop: '1px solid var(--line)', paddingTop: isMobile ? 28 : 40, width: '100%', maxWidth: 600, opacity: mounted ? 1 : 0, transition: 'opacity 0.8s ease 0.5s' }}>
           {STATS.map((s, i) => (
-            <div key={i} style={{ flex: 1, paddingRight: 32 }}>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 36, fontWeight: 600, color: 'var(--blueprint)', lineHeight: 1 }}>{s.value}</div>
+            <div key={i} style={{ flex: isMobile ? '0 0 50%' : 1, paddingRight: isMobile ? 16 : 32 }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: isMobile ? 30 : 36, fontWeight: 600, color: 'var(--blueprint)', lineHeight: 1 }}>{s.value}</div>
               <div style={{ fontSize: 12, color: 'var(--steel)', marginTop: 6, lineHeight: 1.4, fontWeight: 300 }}>{s.label}</div>
             </div>
           ))}
@@ -341,17 +348,17 @@ function HomePageInner() {
       </section>
 
       {/* Features */}
-      <section style={{ padding: '100px 80px', backgroundColor: 'var(--blueprint)', color: 'white' }}>
+      <section style={{ padding: isMobile ? '56px 22px' : '100px 80px', backgroundColor: 'var(--blueprint)', color: 'white' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ marginBottom: 64 }}>
+          <div style={{ marginBottom: isMobile ? 36 : 64 }}>
             <p style={{ fontSize: 11, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--amber-light)', marginBottom: 16, fontFamily: 'var(--font-mono)' }}>— Capabilities</p>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 300, lineHeight: 1.1, letterSpacing: '-0.02em' }}>
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: isMobile ? 34 : 52, fontWeight: 300, lineHeight: 1.1, letterSpacing: '-0.02em' }}>
               Everything an architect<br /><em style={{ color: 'var(--blueprint-light)' }}>needs to move fast</em>
             </h2>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1px', backgroundColor: 'rgba(255,255,255,0.1)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: '1px', backgroundColor: 'rgba(255,255,255,0.1)' }}>
             {FEATURES.map((f, i) => (
-              <div key={i} style={{ padding: '40px 36px', backgroundColor: 'var(--blueprint)', transition: 'background-color 0.2s' }}
+              <div key={i} style={{ padding: isMobile ? '28px 24px' : '40px 36px', backgroundColor: 'var(--blueprint)', transition: 'background-color 0.2s' }}
                 onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--blueprint-mid)')}
                 onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'var(--blueprint)')}>
                 <div style={{ fontSize: 28, marginBottom: 16, opacity: 0.7 }}>{f.icon}</div>
@@ -364,20 +371,20 @@ function HomePageInner() {
       </section>
 
       {/* How it works */}
-      <section style={{ padding: '100px 80px' }} className="paper-grid">
+      <section style={{ padding: isMobile ? '56px 22px' : '100px 80px' }} className="paper-grid">
         <div style={{ maxWidth: 900, margin: '0 auto' }}>
           <p style={{ fontSize: 11, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--amber)', marginBottom: 16, fontFamily: 'var(--font-mono)' }}>— Workflow</p>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 300, marginBottom: 64, lineHeight: 1.1, letterSpacing: '-0.02em' }}>Four steps<br />to a complete design</h2>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: isMobile ? 34 : 52, fontWeight: 300, marginBottom: isMobile ? 36 : 64, lineHeight: 1.1, letterSpacing: '-0.02em' }}>Four steps<br />to a complete design</h2>
           {[
             { n: '01', title: 'Create Account', body: 'Sign up in seconds. Your projects are saved to your account and accessible from any device.' },
             { n: '02', title: 'Enter Requirements', body: 'Plot size, BHK, style, budget, and special needs in natural language. Our AI understands the way architects think.' },
             { n: '03', title: 'Design Generation', body: 'Floor plans, cost estimates, BOQ, interior concepts, MEP drafts, and compliance notes — all generated simultaneously.' },
             { n: '04', title: 'Review & Export', body: 'Edit room sizes, compare layout options, and export to PDF, DXF, SVG or share with your client directly.' },
           ].map((step, i) => (
-            <div key={i} style={{ display: 'flex', gap: 48, alignItems: 'flex-start', padding: '40px 0', borderBottom: '1px solid var(--line)' }}>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--steel)', paddingTop: 6, minWidth: 32 }}>{step.n}</div>
+            <div key={i} style={{ display: 'flex', gap: isMobile ? 18 : 48, alignItems: 'flex-start', padding: isMobile ? '24px 0' : '40px 0', borderBottom: '1px solid var(--line)' }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--steel)', paddingTop: 6, minWidth: 28 }}>{step.n}</div>
               <div>
-                <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, marginBottom: 12, letterSpacing: '-0.01em' }}>{step.title}</h3>
+                <h3 style={{ fontFamily: 'var(--font-display)', fontSize: isMobile ? 22 : 28, fontWeight: 500, marginBottom: 12, letterSpacing: '-0.01em' }}>{step.title}</h3>
                 <p style={{ fontSize: 16, color: 'var(--steel)', lineHeight: 1.7, fontWeight: 300, maxWidth: 520 }}>{step.body}</p>
               </div>
             </div>
@@ -386,9 +393,9 @@ function HomePageInner() {
       </section>
 
       {/* CTA */}
-      <section style={{ padding: '80px', backgroundColor: 'var(--ink)', color: 'white', textAlign: 'center' }}>
+      <section style={{ padding: isMobile ? '56px 22px' : '80px', backgroundColor: 'var(--ink)', color: 'white', textAlign: 'center' }}>
         <p style={{ fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'var(--amber)', marginBottom: 24 }}>— Start Today</p>
-        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 300, marginBottom: 24, letterSpacing: '-0.02em' }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: isMobile ? 32 : 52, fontWeight: 300, marginBottom: 24, letterSpacing: '-0.02em' }}>
           Your next project,<br /><em style={{ color: 'var(--blueprint-light)' }}>ready in minutes</em>
         </h2>
         <p style={{ color: 'var(--steel-light)', fontSize: 16, marginBottom: 40, fontWeight: 300 }}>Free to use. No credit card required.</p>
@@ -398,7 +405,7 @@ function HomePageInner() {
       </section>
 
       {/* Footer */}
-      <footer style={{ padding: '32px 80px', borderTop: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <footer style={{ padding: isMobile ? '24px 22px' : '32px 80px', borderTop: '1px solid var(--line)', display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 12 : 0, justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <svg width="20" height="20" viewBox="0 0 28 28" fill="none">
             <rect x="2" y="2" width="24" height="24" rx="2" stroke="var(--blueprint)" strokeWidth="1.5"/>
