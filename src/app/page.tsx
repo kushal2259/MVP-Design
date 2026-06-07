@@ -276,12 +276,14 @@ function HomePageInner() {
             background: 'radial-gradient(circle, rgba(200,133,58,0.16), rgba(74,114,196,0.06) 55%, transparent 72%)',
             filter: 'blur(10px)',
           }} />
-          <div style={{ position: 'relative', animation: 'floaty 8s ease-in-out infinite', maxWidth: 620, width: '100%' }}>
+          <div style={{ position: 'relative', animation: 'floaty 8s ease-in-out infinite', display: 'inline-block' }}>
             <img
               src="/hero-house.jpg"
               alt="Modern architectural villa designed with ArchCopilot"
               style={{
-                width: '100%', height: 'auto', display: 'block',
+                display: 'block',
+                width: 'auto', height: 'auto',
+                maxHeight: '78vh', maxWidth: '100%',
                 borderRadius: 16,
                 boxShadow: '0 30px 70px rgba(26,39,68,0.28), 0 8px 20px rgba(0,0,0,0.12)',
                 border: '1px solid rgba(255,255,255,0.5)',
