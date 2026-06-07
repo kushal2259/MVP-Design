@@ -194,6 +194,8 @@ export type ActiveTab =
   | '3d-view'
   | 'elevations'
   | 'interior'
+  | 'vastu'
+  | 'sun-vent'
   | 'structural'
   | 'electrical'
   | 'plumbing'

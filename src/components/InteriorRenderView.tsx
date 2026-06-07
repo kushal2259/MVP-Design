@@ -56,22 +56,25 @@ export default function InteriorRenderView({ rooms, settings }: Props) {
         const W = canvasRef.current.clientWidth || 900;
         const H = canvasRef.current.clientHeight || 600;
 
-        // Scene
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color('#1a1a2e');
-        scene.fog = new THREE.FogExp2('#1a1a2e', 0.015);
+        // ── Compute building bounding box (floor 0) for a dollhouse framing ──
+        const f0 = rooms.filter(r => r.floor === 0 && r.type !== 'garden' && r.type !== 'parking');
+        const bbRooms = f0.length ? f0 : rooms.filter(r => r.floor === 0);
+        const minX = Math.min(...bbRooms.map(r => r.x)) * FT;
+        const maxX = Math.max(...bbRooms.map(r => r.x + r.w)) * FT;
+        const minZ = Math.min(...bbRooms.map(r => r.y)) * FT;
+        const maxZ = Math.max(...bbRooms.map(r => r.y + r.h)) * FT;
+        const cx = (minX + maxX) / 2;
+        const cz = (minZ + maxZ) / 2;
+        const span = Math.max(maxX - minX, maxZ - minZ, 4);
 
-        // Camera — start inside the living room
-        const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 500);
-        const livingRoom = rooms.find(r => r.type === 'living' && r.floor === 0) || rooms[0];
-        if (livingRoom) {
-          camera.position.set(
-            (livingRoom.x + livingRoom.w / 2) * FT,
-            1.6,
-            (livingRoom.y + livingRoom.h / 2) * FT
-          );
-        }
-        camera.lookAt(camera.position.x + 3, 1.6, camera.position.z);
+        // Scene — bright neutral studio backdrop so interiors read clearly
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#e9ecf2');
+
+        // Camera — elevated "dollhouse" angle looking down into the open-roof rooms
+        const camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 2000);
+        camera.position.set(cx + span * 0.85, span * 1.05, cz + span * 0.95);
+        camera.lookAt(cx, 0, cz);
 
         // Renderer
         const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -80,39 +83,43 @@ export default function InteriorRenderView({ rooms, settings }: Props) {
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.2;
+        renderer.toneMappingExposure = 1.15;
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         canvasRef.current.appendChild(renderer.domElement);
         rendererRef.current = renderer;
 
-        // Controls
+        // Controls — orbit around the building centre
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true;
         controls.dampingFactor = 0.08;
-        controls.minDistance = 0.5;
-        controls.maxDistance = 80;
-        controls.maxPolarAngle = Math.PI / 2 - 0.01;
-        controls.target.set(camera.position.x + 3, 1.0, camera.position.z);
+        controls.minDistance = span * 0.4;
+        controls.maxDistance = span * 4;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05; // stay above the floor
+        controls.target.set(cx, FLOOR_HEIGHT * FT * 0.3, cz);
         controls.update();
 
-        // ── LIGHTING ─────────────────────────────────────────
-        // Hemisphere sky light
-        const hemi = new THREE.HemisphereLight('#c8d8f8', '#e8d0a8', 0.6);
+        // ── LIGHTING (bright, even — this is a client-facing showcase) ──
+        scene.add(new THREE.AmbientLight('#ffffff', 0.55));
+        const hemi = new THREE.HemisphereLight('#dce6ff', '#f0e2c8', 0.9);
         scene.add(hemi);
 
         // Sun directional light
-        const sun = new THREE.DirectionalLight('#fff5e0', 1.8);
-        sun.position.set(30, 40, 20);
+        const sun = new THREE.DirectionalLight('#fff5e0', 1.6);
+        sun.position.set(cx + span, span * 1.6, cz + span * 0.6);
         sun.castShadow = true;
         sun.shadow.mapSize.set(2048, 2048);
         sun.shadow.camera.near = 0.5;
-        sun.shadow.camera.far = 200;
-        sun.shadow.camera.left = -80;
-        sun.shadow.camera.right = 80;
-        sun.shadow.camera.top = 80;
-        sun.shadow.camera.bottom = -80;
+        sun.shadow.camera.far = span * 6 + 100;
+        sun.shadow.camera.left = -span * 1.2;
+        sun.shadow.camera.right = span * 1.2;
+        sun.shadow.camera.top = span * 1.2;
+        sun.shadow.camera.bottom = -span * 1.2;
         sun.shadow.bias = -0.0005;
         scene.add(sun);
+        // Fill light from the opposite side to lift shadows
+        const fill = new THREE.DirectionalLight('#cfe0ff', 0.5);
+        fill.position.set(cx - span, span, cz - span);
+        scene.add(fill);
 
         // Room accent lights
         const rooms0 = rooms.filter(r => r.floor === 0);
@@ -120,7 +127,7 @@ export default function InteriorRenderView({ rooms, settings }: Props) {
           const lx = (r.x + r.w / 2) * FT;
           const lz = (r.y + r.h / 2) * FT;
           const ly = FLOOR_HEIGHT * FT * 0.85;
-          const pointLight = new THREE.PointLight('#fff8e8', 0.8, r.w * FT * 2.5);
+          const pointLight = new THREE.PointLight('#fff8e8', 0.5, r.w * FT * 3);
           pointLight.position.set(lx, ly, lz);
           pointLight.castShadow = false;
           scene.add(pointLight);
@@ -162,11 +169,9 @@ export default function InteriorRenderView({ rooms, settings }: Props) {
           floor.receiveShadow = true;
           scene.add(floor);
 
-          // Ceiling
-          const ceil = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.12, rh), ceilingMat);
-          ceil.position.set(rx + rw / 2, fh + 0.06, rz + rh / 2);
-          ceil.receiveShadow = true;
-          scene.add(ceil);
+          // NOTE: No ceiling — this is an open-roof dollhouse view so the camera
+          // can look down into every room. (ceilingMat retained for skirting tone.)
+          void ceilingMat;
 
           // Skirting boards
           const skirtH = 0.1, skirtT = 0.03;

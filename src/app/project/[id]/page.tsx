@@ -7,6 +7,10 @@ import {
   generateCostEstimate, generateBOQ, generateTimeline
 } from '@/lib/generator';
 import { generateLayouts } from '@/lib/layoutSolver';
+import { analyzeVastu, DIRECTION_NAMES } from '@/lib/vastuEngine';
+import { analyzeByelaws } from '@/lib/byelawEngine';
+import { generateDetailedBOQ, calcEMI, formatINR, boqToCSV, type Tier } from '@/lib/costEngine';
+import { analyzeSunVent } from '@/lib/sunPathEngine';
 import type { Project, ActiveTab, FloorPlan, PlotSettings, LayoutOption } from '@/types';
 import dynamic from 'next/dynamic';
 
@@ -29,6 +33,8 @@ const TABS: { id: ActiveTab; label: string; icon: string; group?: string }[] = [
   { id: '3d-view', label: '3D View', icon: '◈', group: 'Design' },
   { id: 'elevations', label: 'Elevations', icon: '⬡', group: 'Design' },
   { id: 'interior', label: 'Interior', icon: '🛋', group: 'Design' },
+  { id: 'vastu', label: 'Vastu Score', icon: '🕉', group: 'India Analysis' },
+  { id: 'sun-vent', label: 'Sun & Ventilation', icon: '☀', group: 'India Analysis' },
   { id: 'structural', label: 'Structural', icon: '◐', group: 'Engineering' },
   { id: 'electrical', label: 'Electrical', icon: '⚡', group: 'Engineering' },
   { id: 'plumbing', label: 'Plumbing', icon: '◉', group: 'Engineering' },
@@ -202,20 +208,24 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
               type="text"
-              placeholder="Gemini API key (for AI chat)"
+              placeholder="Gemini API key (optional — for AI chat)"
               value={geminiKey}
+              title={geminiKey ? 'AI features enabled' : 'Optional: add a Gemini API key to enable the AI Copilot chat and smarter analysis. Plans generate fine without it.'}
               onChange={e => {
                 setGeminiKey(e.target.value);
                 localStorage.setItem('ARCH_COPILOT_GEMINI_KEY', e.target.value);
               }}
               style={{
                 padding: '5px 10px', borderRadius: 4,
-                border: '1.5px solid var(--line-strong)',
-                fontSize: 12, width: 200,
+                border: `1.5px solid ${geminiKey ? '#16a34a' : 'var(--line-strong)'}`,
+                fontSize: 12, width: 220,
                 fontFamily: 'var(--font-mono)',
                 color: 'var(--steel)',
               }}
             />
+            <span title="AI Copilot status" style={{ fontSize: 11, color: geminiKey ? '#16a34a' : 'var(--steel)', whiteSpace: 'nowrap' }}>
+              {geminiKey ? '✓ AI on' : '○ AI off'}
+            </span>
             <button onClick={() => setActiveTab('export')} style={{
               padding: '6px 16px', borderRadius: 4,
               border: '1.5px solid var(--blueprint)',
@@ -336,8 +346,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                       width: '100%', padding: '9px 20px',
                       display: 'flex', alignItems: 'center', gap: 9,
                       backgroundColor: activeTab === tab.id ? 'rgba(26,39,68,0.07)' : 'transparent',
+                      borderTop: 'none', borderRight: 'none', borderBottom: 'none',
                       borderLeft: `3px solid ${activeTab === tab.id ? 'var(--blueprint)' : 'transparent'}`,
-                      border: 'none', cursor: 'pointer',
+                      cursor: 'pointer',
                       color: activeTab === tab.id ? 'var(--blueprint)' : 'var(--steel)',
                       fontSize: 12.5, fontWeight: activeTab === tab.id ? 600 : 400,
                       textAlign: 'left', fontFamily: 'var(--font-body)',
@@ -400,6 +411,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 }}
               />
             )}
+            {activeTab === 'vastu' && <VastuTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} />}
+            {activeTab === 'sun-vent' && <SunVentTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} />}
             {activeTab === 'structural' && <EngineeringTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} type="structural" />}
             {activeTab === 'electrical' && <EngineeringTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} type="electrical" />}
             {activeTab === 'plumbing' && <EngineeringTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} type="plumbing" />}
@@ -437,6 +450,166 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
     <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 300, marginBottom: 24, letterSpacing: '-0.02em' }}>
       {children}
     </h2>
+  );
+}
+
+function ScoreRing({ score, label, color }: { score: number; label: string; color: string }) {
+  const R = 52, C = 2 * Math.PI * R;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+      <svg width="130" height="130" viewBox="0 0 130 130">
+        <circle cx="65" cy="65" r={R} fill="none" stroke="var(--line)" strokeWidth="10" />
+        <circle cx="65" cy="65" r={R} fill="none" stroke={color} strokeWidth="10" strokeLinecap="round"
+          strokeDasharray={C} strokeDashoffset={C * (1 - score / 100)} transform="rotate(-90 65 65)" />
+        <text x="65" y="60" textAnchor="middle" fontSize="30" fontWeight="700" fill="var(--ink)" fontFamily="var(--font-display)">{score}</text>
+        <text x="65" y="80" textAnchor="middle" fontSize="11" fill="var(--steel)" fontFamily="var(--font-mono)">/ 100</text>
+      </svg>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{label}</div>
+    </div>
+  );
+}
+
+function useSelectedRooms(project: Project, layoutOptions: LayoutOption[] | null, selectedLayoutId: string) {
+  const opt = layoutOptions?.find(o => o.id === selectedLayoutId) || layoutOptions?.[0];
+  return opt?.rooms || [];
+}
+
+function VastuTab({ project, layoutOptions, selectedLayoutId }: { project: Project; layoutOptions: LayoutOption[] | null; selectedLayoutId: string }) {
+  const rooms = useSelectedRooms(project, layoutOptions, selectedLayoutId);
+  const ps = project.plotSettings;
+  if (!rooms.length || !ps) return <div><SectionTitle>Vastu Score</SectionTitle><p style={{ color: 'var(--steel)' }}>Generate a design first to see the Vastu analysis.</p></div>;
+  const report = analyzeVastu(rooms, ps.width, ps.depth);
+  const scoreColor = report.score >= 85 ? '#16a34a' : report.score >= 70 ? '#65a30d' : report.score >= 55 ? '#d97706' : '#dc2626';
+  const sevColor = { critical: '#dc2626', moderate: '#d97706', minor: '#65a30d' };
+  const statusColor = { ideal: '#16a34a', acceptable: '#d97706', dosha: '#dc2626' };
+
+  return (
+    <div>
+      <SectionTitle>🕉 Vastu Compliance Report</SectionTitle>
+      <p style={{ color: 'var(--steel)', marginBottom: 28, fontWeight: 300, maxWidth: 680 }}>
+        Every room is mapped to its directional zone (Ashtadik) and scored against classical Vastu Shastra principles — the differentiator global tools don&apos;t offer.
+      </p>
+
+      <div style={{ display: 'flex', gap: 32, alignItems: 'center', padding: '24px 28px', border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', marginBottom: 28 }}>
+        <ScoreRing score={report.score} label={report.grade} color={scoreColor} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 18, fontWeight: 500, color: 'var(--ink)', marginBottom: 8 }}>{report.rating}</div>
+          <div style={{ display: 'flex', gap: 20, marginTop: 16 }}>
+            <div><span style={{ fontSize: 24, fontWeight: 700, color: '#16a34a' }}>{report.zoneMap.filter(z => z.status === 'ideal').length}</span><div style={{ fontSize: 11, color: 'var(--steel)' }}>Ideal placements</div></div>
+            <div><span style={{ fontSize: 24, fontWeight: 700, color: '#d97706' }}>{report.zoneMap.filter(z => z.status === 'acceptable').length}</span><div style={{ fontSize: 11, color: 'var(--steel)' }}>Acceptable</div></div>
+            <div><span style={{ fontSize: 24, fontWeight: 700, color: '#dc2626' }}>{report.doshas.length}</span><div style={{ fontSize: 11, color: 'var(--steel)' }}>Doshas (defects)</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+        {/* Zone map */}
+        <div style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', padding: 20 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 14, color: 'var(--blueprint)' }}>Room → Direction Map</h3>
+          {report.zoneMap.map((z, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+              <div>
+                <div style={{ fontSize: 13, color: 'var(--ink)' }}>{z.room}</div>
+                <div style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>{DIRECTION_NAMES[z.zone]}</div>
+              </div>
+              <span style={{ fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 100, color: 'white', backgroundColor: statusColor[z.status], textTransform: 'uppercase' }}>{z.status}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Doshas + remedies */}
+        <div>
+          {report.doshas.length > 0 ? (
+            <div style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', padding: 20, marginBottom: 20 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 14, color: '#dc2626' }}>Doshas & Remedies</h3>
+              {report.doshas.map((d, i) => (
+                <div key={i} style={{ padding: '12px', borderRadius: 8, backgroundColor: '#fef2f2', border: '1px solid #fecaca', marginBottom: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 100, color: 'white', backgroundColor: sevColor[d.severity], textTransform: 'uppercase' }}>{d.severity}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{d.room}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--steel)', lineHeight: 1.5, marginBottom: 6 }}>{d.issue}</div>
+                  <div style={{ fontSize: 12, color: '#166534', lineHeight: 1.5 }}><strong>Remedy:</strong> {d.remedy}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ border: '1px solid #bbf7d0', borderRadius: 10, backgroundColor: '#f0fdf4', padding: 20, marginBottom: 20 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 600, color: '#16a34a' }}>✓ No major doshas detected</h3>
+            </div>
+          )}
+          {report.positives.length > 0 && (
+            <div style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', padding: 20 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: '#16a34a' }}>Auspicious Highlights</h3>
+              {report.positives.map((p, i) => (
+                <div key={i} style={{ fontSize: 12, color: 'var(--steel)', lineHeight: 1.6, marginBottom: 6, display: 'flex', gap: 8 }}>
+                  <span style={{ color: '#16a34a' }}>✓</span> {p}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--steel)', marginTop: 20, fontStyle: 'italic' }}>Orientation assumed North-up. Vastu guidance is advisory; consult a Vastu expert for ritual specifics.</p>
+    </div>
+  );
+}
+
+function SunVentTab({ project, layoutOptions, selectedLayoutId }: { project: Project; layoutOptions: LayoutOption[] | null; selectedLayoutId: string }) {
+  const rooms = useSelectedRooms(project, layoutOptions, selectedLayoutId);
+  if (!rooms.length) return <div><SectionTitle>Sun & Ventilation</SectionTitle><p style={{ color: 'var(--steel)' }}>Generate a design first.</p></div>;
+  const report = analyzeSunVent(rooms, project.requirements.location);
+  const dayColor = report.daylightScore >= 75 ? '#16a34a' : report.daylightScore >= 55 ? '#d97706' : '#dc2626';
+  const ventColor = report.ventilationScore >= 75 ? '#16a34a' : report.ventilationScore >= 55 ? '#d97706' : '#dc2626';
+  const heatBadge = { low: '#16a34a', medium: '#d97706', high: '#dc2626' };
+  const dayBadge = { excellent: '#16a34a', good: '#65a30d', fair: '#d97706', poor: '#dc2626' };
+
+  return (
+    <div>
+      <SectionTitle>☀ Sun-Path & Ventilation</SectionTitle>
+      <p style={{ color: 'var(--steel)', marginBottom: 28, fontWeight: 300, maxWidth: 680 }}>
+        Daylight, heat-gain and cross-ventilation analysis tuned to your <strong>{report.climate}</strong> climate zone.
+      </p>
+
+      <div style={{ display: 'flex', gap: 32, alignItems: 'center', padding: '24px 28px', border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', marginBottom: 28 }}>
+        <ScoreRing score={report.daylightScore} label="Daylight" color={dayColor} />
+        <ScoreRing score={report.ventilationScore} label="Ventilation" color={ventColor} />
+        <div style={{ flex: 1, paddingLeft: 12 }}>
+          <div style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Climate Zone</div>
+          <div style={{ fontSize: 22, fontWeight: 500, color: 'var(--blueprint)', marginBottom: 12 }}>{report.climate}</div>
+          <div style={{ fontSize: 12, color: 'var(--steel)', lineHeight: 1.6 }}>Sun rises East → transits South → sets West. North light is soft & glare-free.</div>
+        </div>
+      </div>
+
+      <div style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', padding: 20, marginBottom: 24 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 14, color: 'var(--blueprint)' }}>Room-by-Room Solar Analysis</h3>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead><tr style={{ textAlign: 'left', color: 'var(--steel)', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+            <th style={{ padding: '6px 0' }}>Room</th><th>Sun Exposure</th><th>Daylight</th><th>Ventilation</th><th>Heat Risk</th>
+          </tr></thead>
+          <tbody>
+            {report.rooms.map((r, i) => (
+              <tr key={i} style={{ borderTop: '1px solid var(--line)' }}>
+                <td style={{ padding: '9px 0', color: 'var(--ink)' }}>{r.room}</td>
+                <td style={{ fontSize: 11, color: 'var(--steel)' }}>{r.exposures.length ? r.exposures.join(', ') : '— no windows —'}</td>
+                <td><span style={{ fontSize: 10, fontWeight: 600, color: dayBadge[r.daylight], textTransform: 'capitalize' }}>{r.daylight}</span></td>
+                <td><span style={{ fontSize: 10, fontWeight: 600, color: r.ventilation === 'cross' ? '#16a34a' : r.ventilation === 'single' ? '#d97706' : '#dc2626', textTransform: 'capitalize' }}>{r.ventilation === 'cross' ? 'Cross ✓' : r.ventilation}</span></td>
+                <td><span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 100, color: 'white', backgroundColor: heatBadge[r.heatRisk], textTransform: 'uppercase' }}>{r.heatRisk}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: '#fffbeb', padding: 20 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: '#92400e' }}>Climate-Specific Recommendations</h3>
+        {report.recommendations.map((rec, i) => (
+          <div key={i} style={{ fontSize: 13, color: '#78350f', lineHeight: 1.6, marginBottom: 8, display: 'flex', gap: 8 }}>
+            <span>☀</span> {rec}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1238,6 +1411,135 @@ function CostTab({ project }: { project: Project }) {
           💡 <strong>Note:</strong> Rates are indicative for {project.requirements.location}. Final costs depend on contractor, material selection, current market rates, and site conditions. Recommend getting 3 contractor quotes.
         </div>
       </div>
+
+      <IndiaCostPanel builtUp={cost.builtUp || 0} location={project.requirements.location} projectName={project.name} />
+    </div>
+  );
+}
+
+function IndiaCostPanel({ builtUp, location, projectName }: { builtUp: number; location: string; projectName: string }) {
+  const [tier, setTier] = useState<Tier>('standard');
+  const [downPct, setDownPct] = useState(20);
+  const [rate, setRate] = useState(8.5);
+  const [years, setYears] = useState(20);
+
+  if (!builtUp) return null;
+  const cb = generateDetailedBOQ(builtUp, location, tier);
+  const principal = cb.total * (1 - downPct / 100);
+  const emi = calcEMI(principal, rate, years);
+
+  const downloadQuote = () => {
+    const csv = boqToCSV(cb, projectName);
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${projectName.replace(/\s+/g, '_')}_Quotation.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
+  const catTotals = cb.boq.reduce((m, l) => { m[l.category] = (m[l.category] || 0) + l.amount; return m; }, {} as Record<string, number>);
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 400 }}>🇮🇳 Live Cost Engine & Contractor Quotation — <span style={{ color: 'var(--blueprint)' }}>{cb.city}</span></h3>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {(['economy', 'standard', 'premium'] as Tier[]).map(t => (
+            <button key={t} onClick={() => setTier(t)} style={{
+              padding: '7px 16px', borderRadius: 4, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)', textTransform: 'capitalize',
+              border: `1.5px solid ${tier === t ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+              backgroundColor: tier === t ? 'var(--blueprint)' : 'white', color: tier === t ? 'white' : 'var(--steel)',
+            }}>{t}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Totals strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+        {[
+          { label: 'Subtotal (pre-GST)', val: formatINR(cb.subtotal), c: 'var(--ink)' },
+          { label: 'GST (blended)', val: formatINR(cb.gstAmount), c: '#d97706' },
+          { label: 'Grand Total', val: formatINR(cb.total), c: 'var(--blueprint)' },
+          { label: 'All-in ₹/sq ft', val: `₹${cb.perSqftAllIn.toLocaleString('en-IN')}`, c: 'var(--amber)' },
+        ].map((x, i) => (
+          <div key={i} style={{ border: '1px solid var(--line)', borderRadius: 8, backgroundColor: 'white', padding: '16px 18px' }}>
+            <div style={{ fontSize: 11, color: 'var(--steel)', marginBottom: 6, fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>{x.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: x.c, fontFamily: 'var(--font-display)' }}>{x.val}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 24 }}>
+        {/* Detailed BOQ */}
+        <div style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid var(--line)' }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--blueprint)' }}>Contractor-Grade BOQ</span>
+            <button onClick={downloadQuote} style={{ padding: '6px 14px', borderRadius: 4, border: '1.5px solid #16a34a', backgroundColor: 'white', color: '#16a34a', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>⬇ Export Quotation (CSV)</button>
+          </div>
+          <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead><tr style={{ backgroundColor: 'var(--paper)', color: 'var(--steel)', position: 'sticky', top: 0 }}>
+                <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 10 }}>ITEM</th>
+                <th style={{ padding: '8px', textAlign: 'right', fontSize: 10 }}>QTY</th>
+                <th style={{ padding: '8px', textAlign: 'right', fontSize: 10 }}>RATE</th>
+                <th style={{ padding: '8px', textAlign: 'right', fontSize: 10 }}>GST</th>
+                <th style={{ padding: '8px 12px', textAlign: 'right', fontSize: 10 }}>AMOUNT</th>
+              </tr></thead>
+              <tbody>
+                {cb.boq.map((l, i) => (
+                  <tr key={i} style={{ borderTop: '1px solid var(--line)' }}>
+                    <td style={{ padding: '8px 12px' }}><div style={{ color: 'var(--ink)' }}>{l.item}</div><div style={{ fontSize: 10, color: 'var(--steel)' }}>{l.category}</div></td>
+                    <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--steel)' }}>{l.qty.toLocaleString('en-IN')} {l.unit}</td>
+                    <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>₹{l.rate.toLocaleString('en-IN')}</td>
+                    <td style={{ padding: '8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--steel)' }}>{l.gstPct}%</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{formatINR(l.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* EMI calculator */}
+        <div style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', padding: 20 }}>
+          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16, color: 'var(--blueprint)' }}>🏦 Home Loan EMI Calculator</h4>
+          {[
+            { label: `Down payment: ${downPct}%`, val: downPct, set: setDownPct, min: 0, max: 60, step: 5, suffix: `(${formatINR(cb.total * downPct / 100)})` },
+            { label: `Interest rate: ${rate}% p.a.`, val: rate, set: setRate, min: 6, max: 14, step: 0.1, suffix: '' },
+            { label: `Tenure: ${years} years`, val: years, set: setYears, min: 5, max: 30, step: 1, suffix: '' },
+          ].map((s, i) => (
+            <div key={i} style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: 'var(--ink)', marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}>
+                <span>{s.label}</span><span style={{ color: 'var(--steel)', fontSize: 11 }}>{s.suffix}</span>
+              </div>
+              <input type="range" min={s.min} max={s.max} step={s.step} value={s.val} onChange={e => s.set(+e.target.value)} style={{ width: '100%', accentColor: 'var(--blueprint)' }} />
+            </div>
+          ))}
+          <div style={{ marginTop: 20, padding: '18px', backgroundColor: 'var(--blueprint)', borderRadius: 8, textAlign: 'center', color: 'white' }}>
+            <div style={{ fontSize: 11, opacity: 0.7, letterSpacing: '0.08em', marginBottom: 4 }}>MONTHLY EMI</div>
+            <div style={{ fontSize: 34, fontWeight: 700, fontFamily: 'var(--font-display)' }}>{formatINR(emi.emi)}</div>
+          </div>
+          <div style={{ marginTop: 14, fontSize: 12, color: 'var(--steel)', lineHeight: 1.9 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Loan amount</span><span style={{ fontWeight: 600, color: 'var(--ink)' }}>{formatINR(emi.principal)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Total interest</span><span style={{ fontWeight: 600, color: '#d97706' }}>{formatINR(emi.totalInterest)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Total payable</span><span style={{ fontWeight: 600, color: 'var(--ink)' }}>{formatINR(emi.totalPayable)}</span></div>
+          </div>
+
+          {/* Category mini-breakdown */}
+          <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+            {Object.entries(catTotals).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([cat, amt]) => {
+              const pct = Math.round((amt / cb.subtotal) * 100);
+              return (
+                <div key={cat} style={{ marginBottom: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}><span style={{ color: 'var(--ink)' }}>{cat}</span><span style={{ color: 'var(--steel)' }}>{pct}%</span></div>
+                  <div style={{ height: 5, backgroundColor: 'var(--paper-dark)', borderRadius: 3 }}><div style={{ height: '100%', width: `${pct}%`, backgroundColor: 'var(--blueprint-light)', borderRadius: 3 }} /></div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--steel)', marginTop: 16, fontStyle: 'italic' }}>City rates are 2026 market approximations including 18% blended GST. Use the exported quotation as a contractor negotiation baseline.</p>
     </div>
   );
 }
@@ -1387,6 +1689,65 @@ function TimelineTab({ project }: { project: Project }) {
   );
 }
 
+function ByelawPanel({ project }: { project: Project }) {
+  const ps = project.plotSettings;
+  const opt = project.layoutOptions?.find(o => o.id === (project.selectedLayoutId || 'option-a')) || project.layoutOptions?.[0];
+  if (!ps || !opt) return null;
+  const report = analyzeByelaws(opt.rooms, ps);
+  const sc = report.score >= 85 ? '#16a34a' : report.score >= 65 ? '#d97706' : '#dc2626';
+  const stColor = { pass: '#16a34a', warn: '#d97706', fail: '#dc2626' };
+  const stIcon = { pass: '✓', warn: '!', fail: '✕' };
+
+  const grouped = report.checks.reduce((m, c) => { (m[c.category] ||= []).push(c); return m; }, {} as Record<string, typeof report.checks>);
+
+  return (
+    <div style={{ marginBottom: 32 }}>
+      <div style={{ display: 'flex', gap: 24, alignItems: 'center', padding: '20px 24px', border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', marginBottom: 20 }}>
+        <ScoreRing score={report.score} label="Byelaw Score" color={sc} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', marginBottom: 4 }}>Checked against</div>
+          <div style={{ fontSize: 20, fontWeight: 500, color: 'var(--blueprint)', marginBottom: 4 }}>{report.city} + NBC 2016</div>
+          <div style={{ fontSize: 12, color: 'var(--steel)', marginBottom: 14 }}>{report.cityNote}</div>
+          <div style={{ display: 'flex', gap: 24 }}>
+            <div><span style={{ fontSize: 20, fontWeight: 700, color: '#16a34a' }}>{report.summary.pass}</span> <span style={{ fontSize: 11, color: 'var(--steel)' }}>pass</span></div>
+            <div><span style={{ fontSize: 20, fontWeight: 700, color: '#d97706' }}>{report.summary.warn}</span> <span style={{ fontSize: 11, color: 'var(--steel)' }}>warnings</span></div>
+            <div><span style={{ fontSize: 20, fontWeight: 700, color: '#dc2626' }}>{report.summary.fail}</span> <span style={{ fontSize: 11, color: 'var(--steel)' }}>failures</span></div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {[
+            { k: 'FAR / FSI', a: report.far.actual, r: `≤ ${report.far.required}`, s: report.far.status },
+            { k: 'Ground coverage', a: `${Math.round(report.groundCoverage.actual * 100)}%`, r: `≤ ${Math.round(report.groundCoverage.required * 100)}%`, s: report.groundCoverage.status },
+          ].map((x, i) => (
+            <div key={i} style={{ minWidth: 150, padding: '10px 14px', borderRadius: 8, border: `1px solid ${stColor[x.s]}`, backgroundColor: x.s === 'pass' ? '#f0fdf4' : x.s === 'warn' ? '#fffbeb' : '#fef2f2' }}>
+              <div style={{ fontSize: 11, color: 'var(--steel)' }}>{x.k}</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: stColor[x.s] }}>{x.a} <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--steel)' }}>{x.r}</span></div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        {Object.entries(grouped).map(([cat, items]) => (
+          <div key={cat} style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', padding: 16 }}>
+            <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: 'var(--blueprint)' }}>{cat}</h4>
+            {items.map((c, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--line)' }}>
+                <span style={{ width: 18, height: 18, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'white', backgroundColor: stColor[c.status] }}>{stIcon[c.status]}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, color: 'var(--ink)' }}>{c.item}</div>
+                  <div style={{ fontSize: 10, color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>need {c.required} · got {c.actual}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--steel)', marginTop: 14, fontStyle: 'italic' }}>Automated NBC + municipal byelaw pre-check. Final sanction requires a licensed architect&apos;s stamped drawings.</p>
+    </div>
+  );
+}
+
 function ComplianceTab({ project, complianceData }: { project: Project; complianceData: Record<string, unknown> | null }) {
   const req = project.requirements;
 
@@ -1417,6 +1778,8 @@ function ComplianceTab({ project, complianceData }: { project: Project; complian
   return (
     <div>
       <SectionTitle>Compliance & Approvals</SectionTitle>
+
+      <ByelawPanel project={project} />
 
       <div style={{
         padding: '16px 20px', marginBottom: 32,

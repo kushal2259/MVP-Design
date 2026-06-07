@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { saveProject, generateId, getCurrentUser } from '@/lib/store';
@@ -393,7 +393,10 @@ export default function NewProjectPage() {
                 </div>
 
                 <div>
-                  <label style={labelStyle}>Any Other Requirements</label>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <label style={{ ...labelStyle, marginBottom: 0 }}>Any Other Requirements</label>
+                    <VoiceInput onTranscript={(t) => update('requirements', (req.requirements ? req.requirements + ' ' : '') + t)} />
+                  </div>
                   <textarea
                     value={req.requirements}
                     onChange={e => update('requirements', e.target.value)}
@@ -408,7 +411,7 @@ export default function NewProjectPage() {
                     onBlur={e => (e.target.style.borderColor = 'var(--line-strong)')}
                   />
                   <p style={{ fontSize: 12, color: 'var(--steel)', marginTop: 6 }}>
-                    Describe anything specific — our AI understands natural language
+                    🎙 Tap the mic and describe your dream home in <strong>Hindi or English</strong> — our AI understands natural language.
                   </p>
                 </div>
               </div>
@@ -542,6 +545,62 @@ export default function NewProjectPage() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function VoiceInput({ onTranscript }: { onTranscript: (t: string) => void }) {
+  const [listening, setListening] = useState(false);
+  const [lang, setLang] = useState<'hi-IN' | 'en-IN'>('hi-IN');
+  const [supported, setSupported] = useState(true);
+  const recRef = useRef<any>(null);
+
+  useEffect(() => {
+    const SR = typeof window !== 'undefined' && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+    if (!SR) setSupported(false);
+  }, []);
+
+  const toggle = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) { setSupported(false); return; }
+    if (listening) { recRef.current?.stop(); setListening(false); return; }
+    const rec = new SR();
+    rec.lang = lang;
+    rec.interimResults = false;
+    rec.continuous = true;
+    rec.onresult = (e: any) => {
+      let txt = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) txt += e.results[i][0].transcript;
+      if (txt.trim()) onTranscript(txt.trim());
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recRef.current = rec;
+    rec.start();
+    setListening(true);
+  };
+
+  if (!supported) {
+    return <span style={{ fontSize: 11, color: 'var(--steel)' }}>🎙 Voice input not supported in this browser</span>;
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <select value={lang} onChange={e => setLang(e.target.value as 'hi-IN' | 'en-IN')} disabled={listening}
+        style={{ fontSize: 11, padding: '4px 8px', borderRadius: 4, border: '1.5px solid var(--line-strong)', backgroundColor: 'white', color: 'var(--steel)', cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+        <option value="hi-IN">हिन्दी (Hindi)</option>
+        <option value="en-IN">English (India)</option>
+      </select>
+      <button type="button" onClick={toggle} style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '6px 14px', borderRadius: 100, cursor: 'pointer', fontFamily: 'var(--font-body)',
+        border: `1.5px solid ${listening ? '#dc2626' : 'var(--amber)'}`,
+        backgroundColor: listening ? '#dc2626' : 'white',
+        color: listening ? 'white' : 'var(--amber)', fontSize: 12, fontWeight: 600,
+      }}>
+        <span style={{ fontSize: 13 }}>🎙</span>
+        {listening ? 'Listening… tap to stop' : 'Speak'}
+      </button>
     </div>
   );
 }

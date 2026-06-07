@@ -114,10 +114,11 @@ export default function FloorPlanV2Renderer({ rooms, plotWidth, plotDepth, showF
 
   return (
     <svg
-      width={svgW}
-      height={svgH}
+      width="100%"
+      height="100%"
       viewBox={`0 0 ${svgW} ${svgH}`}
-      style={{ display: 'block', maxWidth: '100%' }}
+      preserveAspectRatio="xMidYMid meet"
+      style={{ display: 'block', width: '100%', height: 'auto', maxHeight: '70vh' }}
     >
       {/* Background */}
       <rect width={svgW} height={svgH} fill="#fafaf8" />
