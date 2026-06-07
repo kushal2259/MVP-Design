@@ -261,24 +261,106 @@ function HomePageInner() {
 
       {/* Hero */}
       <section style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'flex-start', padding: '120px 80px 80px', position: 'relative', overflow: 'hidden' }}>
-        {/* Blueprint grid bg */}
-        <div style={{ position: 'absolute', top: 0, right: 0, width: '55%', height: '100%', opacity: mounted ? 0.07 : 0, transition: 'opacity 1s ease', backgroundImage: `linear-gradient(var(--blueprint) 1px, transparent 1px),linear-gradient(90deg, var(--blueprint) 1px, transparent 1px),linear-gradient(var(--blueprint-light) 1px, transparent 1px),linear-gradient(90deg, var(--blueprint-light) 1px, transparent 1px)`, backgroundSize: '80px 80px, 80px 80px, 16px 16px, 16px 16px' }} />
+        {/* 3D Isometric House Illustration */}
+        <style>{`@keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-14px); } }`}</style>
+        <div style={{
+          position: 'absolute', top: 0, bottom: 0, right: '2%', width: '52%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          pointerEvents: 'none',
+          opacity: mounted ? 1 : 0, transform: mounted ? 'none' : 'translateY(24px)',
+          transition: 'opacity 1.1s ease 0.3s, transform 1.1s ease 0.3s',
+        }}>
+          <svg width="640" height="600" viewBox="0 0 640 600" fill="none" xmlns="http://www.w3.org/2000/svg"
+            style={{ maxWidth: '100%', height: 'auto', animation: 'floaty 7s ease-in-out infinite' }}>
+            <defs>
+              <radialGradient id="gGlow" cx="50%" cy="42%" r="55%">
+                <stop offset="0%" stopColor="var(--amber)" stopOpacity="0.18" />
+                <stop offset="55%" stopColor="var(--blueprint-light)" stopOpacity="0.08" />
+                <stop offset="100%" stopColor="var(--amber)" stopOpacity="0" />
+              </radialGradient>
+              <radialGradient id="gGround" cx="50%" cy="50%" r="60%">
+                <stop offset="0%" stopColor="#e9efe6" />
+                <stop offset="100%" stopColor="#dfe5da" />
+              </radialGradient>
+              <linearGradient id="gRoof" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#243a63" />
+                <stop offset="100%" stopColor="#16243f" />
+              </linearGradient>
+              <linearGradient id="gWallR" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#f3eee4" />
+                <stop offset="100%" stopColor="#e7ddcb" />
+              </linearGradient>
+              <linearGradient id="gWallL" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#d9cdb8" />
+                <stop offset="100%" stopColor="#bdb09a" />
+              </linearGradient>
+              <linearGradient id="gWin" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#f7d49a" />
+                <stop offset="100%" stopColor="#e9b063" />
+              </linearGradient>
+            </defs>
 
-        {/* Architectural lines decoration */}
-        <svg style={{ position: 'absolute', top: 80, right: 80, opacity: 0.12 }} width="500" height="500" viewBox="0 0 500 500">
-          <rect x="50" y="50" width="400" height="300" fill="none" stroke="var(--blueprint)" strokeWidth="1"/>
-          <rect x="50" y="50" width="200" height="150" fill="none" stroke="var(--blueprint)" strokeWidth="0.5"/>
-          <rect x="250" y="50" width="200" height="150" fill="none" stroke="var(--blueprint)" strokeWidth="0.5"/>
-          <rect x="50" y="200" width="130" height="150" fill="none" stroke="var(--blueprint)" strokeWidth="0.5"/>
-          <rect x="180" y="200" width="270" height="150" fill="none" stroke="var(--blueprint)" strokeWidth="0.5"/>
-          <line x1="50" y1="50" x2="50" y2="380" stroke="var(--amber)" strokeWidth="1.5"/>
-          <line x1="50" y1="380" x2="450" y2="380" stroke="var(--amber)" strokeWidth="1.5"/>
-          <circle cx="50" cy="50" r="3" fill="var(--amber)"/>
-          <circle cx="450" cy="380" r="3" fill="var(--amber)"/>
-          <text x="60" y="45" fill="var(--blueprint)" fontSize="8" fontFamily="monospace">GROUND FLOOR — SCALE 1:100</text>
-          <text x="55" y="390" fill="var(--steel)" fontSize="7" fontFamily="monospace">LIVING ROOM: 320 SQ.FT</text>
-          <text x="255" y="390" fill="var(--steel)" fontSize="7" fontFamily="monospace">MASTER BED: 240 SQ.FT</text>
-        </svg>
+            {/* soft glow */}
+            <circle cx="330" cy="250" r="250" fill="url(#gGlow)" />
+
+            {/* sun */}
+            <circle cx="528" cy="120" r="34" fill="var(--amber)" opacity="0.9" />
+            <circle cx="528" cy="120" r="46" fill="none" stroke="var(--amber)" strokeWidth="1.5" opacity="0.35" />
+            {[0,45,90,135,180,225,270,315].map(a => {
+              const r1 = 54, r2 = 66; const rad = a * Math.PI / 180;
+              return <line key={a} x1={528 + r1*Math.cos(rad)} y1={120 + r1*Math.sin(rad)} x2={528 + r2*Math.cos(rad)} y2={120 + r2*Math.sin(rad)} stroke="var(--amber)" strokeWidth="2" strokeLinecap="round" opacity="0.5" />;
+            })}
+
+            {/* ground plane */}
+            <polygon points="320,295 590,430 320,565 50,430" fill="url(#gGround)" />
+            <polygon points="320,295 590,430 320,565 50,430" fill="none" stroke="var(--amber)" strokeWidth="1" strokeDasharray="2 6" opacity="0.4" />
+
+            {/* tree */}
+            <rect x="120" y="392" width="9" height="34" rx="3" fill="#6b4c2a" />
+            <circle cx="124" cy="384" r="30" fill="#7d9e6c" />
+            <circle cx="108" cy="396" r="22" fill="#6f9460" />
+            <circle cx="140" cy="398" r="20" fill="#85a874" />
+
+            {/* ── MAIN HOUSE BLOCK ── */}
+            {/* left wall (shade) */}
+            <polygon points="320,310 180,240 180,380 320,450" fill="url(#gWallL)" stroke="#16243f" strokeWidth="1" strokeOpacity="0.25" />
+            {/* right wall (lit) */}
+            <polygon points="460,240 320,310 320,450 460,380" fill="url(#gWallR)" stroke="#16243f" strokeWidth="1" strokeOpacity="0.18" />
+            {/* roof */}
+            <polygon points="320,170 460,240 320,310 180,240" fill="url(#gRoof)" />
+            <polygon points="320,188 442,250 320,302 198,250" fill="none" stroke="#4a6aa0" strokeWidth="1.4" opacity="0.5" />
+
+            {/* floor division line */}
+            <polyline points="460,298.8 320,368.8 180,298.8" fill="none" stroke="#16243f" strokeWidth="1.4" strokeOpacity="0.22" />
+
+            {/* RIGHT WALL windows (2 storeys, 2 columns) */}
+            <polygon points="341,313.5 378.8,294.6 378.8,328.2 341,347.1" fill="url(#gWin)" stroke="#16243f" strokeWidth="1.4" />
+            <polygon points="390,289 427.8,270.1 427.8,303.7 390,322.6" fill="url(#gWin)" stroke="#16243f" strokeWidth="1.4" />
+            <polygon points="341,369.5 378.8,350.6 378.8,384.2 341,403.1" fill="url(#gWin)" stroke="#16243f" strokeWidth="1.4" />
+            <polygon points="390,345 427.8,326.1 427.8,359.7 390,378.6" fill="url(#gWin)" stroke="#16243f" strokeWidth="1.4" />
+
+            {/* LEFT WALL upper window */}
+            <polygon points="243,285.5 205.2,266.6 205.2,300.2 243,319.1" fill="url(#gWin)" stroke="#16243f" strokeWidth="1.4" />
+            {/* LEFT WALL ground window */}
+            <polygon points="243,341.5 205.2,322.6 205.2,356.2 243,375.1" fill="url(#gWin)" stroke="#16243f" strokeWidth="1.4" />
+            {/* LEFT WALL door */}
+            <polygon points="292,366 257,348.5 257,418.5 292,436" fill="var(--amber)" stroke="#16243f" strokeWidth="1.4" />
+            <polygon points="288,369 263,356.5 263,414 288,427" fill="none" stroke="#16243f" strokeWidth="0.8" opacity="0.4" />
+
+            {/* ── ROOFTOP WATER TANK (Indian touch) ── */}
+            <polygon points="300,209 274,209 274,243 300,256" fill="#b5732f" />
+            <polygon points="326,209 300,222 300,256 326,243" fill="#9a611f" />
+            <polygon points="300,196 326,209 300,222 274,209" fill="var(--amber)" />
+
+            {/* subtle height dimension line */}
+            <g opacity="0.5">
+              <line x1="498" y1="246" x2="498" y2="386" stroke="var(--amber)" strokeWidth="1.2" />
+              <path d="M494,250 L498,243 L502,250" fill="none" stroke="var(--amber)" strokeWidth="1.2" />
+              <path d="M494,382 L498,389 L502,382" fill="none" stroke="var(--amber)" strokeWidth="1.2" />
+              <text x="506" y="320" fill="var(--steel)" fontSize="11" fontFamily="monospace">G+1</text>
+            </g>
+          </svg>
+        </div>
 
         {/* Tag */}
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 100, border: '1px solid var(--amber)', marginBottom: 32, opacity: mounted ? 1 : 0, transform: mounted ? 'none' : 'translateY(10px)', transition: 'all 0.6s ease', backgroundColor: 'rgba(200,133,58,0.06)' }}>
