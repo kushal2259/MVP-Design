@@ -1,3 +1,6 @@
+// New deterministic planner pipeline (LLM never produces geometry).
+import { generatePlanFromSettings } from './planner';
+
 export interface WindowConfig {
   id: string;
   side: 'front' | 'back' | 'left' | 'right';
@@ -289,7 +292,24 @@ export function calculateSetbacks(width: number, depth: number, location: string
   return { front, rear, left, right };
 }
 
+/**
+ * Generate layout options.
+ * Primary path: the new deterministic planner pipeline
+ *   (Requirements → Rules → Constraints → Adjacency → Optimizer → Geometry).
+ * The previous Vastu-grid generator is retained as a safe fallback only.
+ */
 export function generateLayouts(settings: PlotSettings): LayoutOption[] {
+  try {
+    const options = generatePlanFromSettings(settings);
+    if (options && options.length) return options as unknown as LayoutOption[];
+    return generateLayoutsLegacy(settings);
+  } catch (err) {
+    console.error('Planner pipeline failed, falling back to legacy Vastu grid:', err);
+    return generateLayoutsLegacy(settings);
+  }
+}
+
+function generateLayoutsLegacy(settings: PlotSettings): LayoutOption[] {
   const { width, depth, floors, bedrooms, location } = settings;
   const setbacks = calculateSetbacks(width, depth, location);
 

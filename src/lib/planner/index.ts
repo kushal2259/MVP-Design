@@ -1,0 +1,60 @@
+// ============================================================================
+//  PLANNER ORCHESTRATOR
+//  Wires the full deterministic pipeline:
+//    ParsedRequirements → ConstraintGenerator → AdjacencyMatrix
+//    → Strategy selection → LayoutOptimizer → (GeometryEngine inside)
+//  Produces ranked LayoutCandidates and maps the top 3 to the app's
+//  LayoutOption shape so the rest of the UI keeps working unchanged.
+// ============================================================================
+import type { LayoutOption, PlotSettings } from '@/types';
+import type { ParsedRequirements, RoomProgram, AdjacencyMatrix, LayoutCandidate } from './types';
+import { generateProgram } from './constraintGenerator';
+import { generateAdjacencyMatrix } from './adjacency';
+import { selectStrategies } from './strategies';
+import { optimize } from './optimizer';
+import { fromPlotSettings } from './requirementParser';
+
+export interface PlanResult {
+  program: RoomProgram;
+  adjacency: AdjacencyMatrix;
+  candidates: LayoutCandidate[];
+  options: LayoutOption[];
+}
+
+const OPTION_IDS: LayoutOption['id'][] = ['option-a', 'option-b', 'option-c'];
+
+export function candidatesToOptions(candidates: LayoutCandidate[]): LayoutOption[] {
+  return candidates.slice(0, 3).map((c, i) => ({
+    id: OPTION_IDS[i],
+    name: c.strategyName,
+    tagline: c.tagline,
+    description: `${c.description}  ·  Layout score ${c.scores.total}/100 (vent ${c.scores.ventilation}, light ${c.scores.lighting}, privacy ${c.scores.privacy}).`,
+    rooms: c.rooms,
+    costMultiplier: c.costMultiplier,
+  }));
+}
+
+/** Full pipeline from parsed (LLM-extracted) requirements. */
+export function generatePlan(req: ParsedRequirements): PlanResult {
+  const program = generateProgram(req);
+  const adjacency = generateAdjacencyMatrix(program);
+  const strategies = selectStrategies(req.priorities, req.vastu, 4);
+  const candidates = optimize(program, adjacency, strategies, 3);
+  return { program, adjacency, candidates, options: candidatesToOptions(candidates) };
+}
+
+/** Drop-in deterministic replacement for the legacy generateLayouts(). */
+export function generatePlanFromSettings(settings: PlotSettings): LayoutOption[] {
+  const req = fromPlotSettings(settings);
+  return generatePlan(req).options;
+}
+
+export * from './types';
+export { generateProgram } from './constraintGenerator';
+export { generateAdjacencyMatrix } from './adjacency';
+export { STRATEGIES, selectStrategies, getStrategy } from './strategies';
+export { optimize } from './optimizer';
+export { buildGeometry } from './geometryEngine';
+export { scoreLayout } from './scorer';
+export { parseRequirements, parseRequirementsLocal, fromPlotSettings } from './requirementParser';
+export { getAllRoomRules, setRoomRule, getRoomRule } from './ruleEngine';
