@@ -133,6 +133,7 @@ export interface LayoutCandidate {
   costMultiplier: number;
   rooms: RoomLayout[];
   scores: CandidateScores;
+  seedName?: string;            // e.g. "courtyard_v3" — reproducible design seed
 }
 
 export type { RoomLayout, PlotSettings };

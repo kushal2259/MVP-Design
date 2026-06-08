@@ -30,7 +30,8 @@ export function optimize(
 
   for (const strategy of strategies) {
     let best: LayoutCandidate | null = null;
-    for (const v of variationsFor(strategy)) {
+    const variations = variationsFor(strategy);
+    variations.forEach((v, idx) => {
       const rooms = buildGeometry(program, strategy, adjacency, v);
       const scores = scoreLayout(rooms, strategy.weights, ba);
       const cand: LayoutCandidate = {
@@ -41,9 +42,10 @@ export function optimize(
         costMultiplier: strategy.costMultiplier,
         rooms,
         scores,
+        seedName: `${strategy.id}_v${idx + 1}`,
       };
       if (!best || cand.scores.total > best.scores.total) best = cand;
-    }
+    });
     if (best) candidates.push(best);
   }
 

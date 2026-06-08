@@ -74,6 +74,28 @@ export const STRATEGIES: DesignStrategy[] = [
     seed: 67,
   },
   {
+    id: 'modern-villa',
+    name: 'Modern Villa',
+    tagline: 'Statement massing & glazing',
+    description: 'Bold contemporary villa massing — a generous public block facing the entrance, deep glazing, and a private bedroom wing set back for a striking, asymmetric street presence.',
+    weights: { ventilation: 0.16, privacy: 0.18, lighting: 0.24, circulation: 0.14, spaceUtilization: 0.14, futureExpansion: 0.14 },
+    costMultiplier: 1.22,
+    features: { courtyard: false, openPlan: true, extraBalconies: true, centralCirculation: false, vastu: false },
+    zoneOrder: ['public', 'circulation', 'service', 'private', 'utility', 'outdoor'],
+    seed: 83,
+  },
+  {
+    id: 'future-expansion',
+    name: 'Future Expansion Ready',
+    tagline: 'Designed to grow',
+    description: 'Regular structural grid, stacked services and a clear circulation core so floors/rooms can be added later with minimal rework — ideal for phased construction.',
+    weights: { ventilation: 0.16, privacy: 0.15, lighting: 0.15, circulation: 0.16, spaceUtilization: 0.16, futureExpansion: 0.22 },
+    costMultiplier: 0.98,
+    features: { courtyard: false, openPlan: false, extraBalconies: false, centralCirculation: true, vastu: false },
+    zoneOrder: ['service', 'circulation', 'public', 'private', 'utility', 'outdoor'],
+    seed: 97,
+  },
+  {
     id: 'compact',
     name: 'Compact Efficient',
     tagline: 'Maximum usable area, minimal waste',
@@ -90,20 +112,17 @@ export function getStrategy(id: string): DesignStrategy {
   return STRATEGIES.find(s => s.id === id) || STRATEGIES[0];
 }
 
-/** Choose a diverse set of strategies for a brief (priorities can bias picks). */
+/** Choose a diverse set of strategies for a brief (priorities can bias picks).
+ *  Pure: boosts are computed in a local map (no mutation of shared state). */
 export function selectStrategies(priorities: string[], vastu: boolean, count = 4): DesignStrategy[] {
-  const ranked = [...STRATEGIES];
-  const boost = (id: string, by: number) => {
-    const s = ranked.find(x => x.id === id);
-    if (s) (s as DesignStrategy & { _b?: number })._b = ((s as DesignStrategy & { _b?: number })._b || 0) + by;
-  };
-  if (vastu || priorities.includes('vastu')) boost('vastu', 5);
-  if (priorities.includes('privacy')) boost('privacy', 3);
-  if (priorities.includes('ventilation')) { boost('courtyard', 3); boost('open', 2); }
-  if (priorities.includes('lighting')) { boost('open', 2); boost('courtyard', 2); }
-  if (priorities.includes('open-space')) boost('open', 3);
-  ranked.sort((a, b) => (((b as DesignStrategy & { _b?: number })._b || 0) - ((a as DesignStrategy & { _b?: number })._b || 0)) || (a.seed - b.seed));
-  // Always keep variety: ensure family + at least one of luxury/open are present
-  const picked = ranked.slice(0, count);
-  return picked;
+  const boost: Record<string, number> = {};
+  const add = (id: string, by: number) => { boost[id] = (boost[id] || 0) + by; };
+  if (vastu || priorities.includes('vastu')) add('vastu', 5);
+  if (priorities.includes('privacy')) add('privacy', 3);
+  if (priorities.includes('ventilation')) { add('courtyard', 3); add('open', 2); }
+  if (priorities.includes('lighting')) { add('open', 2); add('courtyard', 2); add('modern-villa', 1); }
+  if (priorities.includes('open-space')) { add('open', 3); add('modern-villa', 1); }
+  return [...STRATEGIES]
+    .sort((a, b) => ((boost[b.id] || 0) - (boost[a.id] || 0)) || (a.seed - b.seed))
+    .slice(0, count);
 }

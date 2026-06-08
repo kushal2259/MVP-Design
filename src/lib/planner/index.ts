@@ -28,7 +28,7 @@ export function candidatesToOptions(candidates: LayoutCandidate[]): LayoutOption
     id: OPTION_IDS[i],
     name: c.strategyName,
     tagline: c.tagline,
-    description: `${c.description}  ·  Layout score ${c.scores.total}/100 (vent ${c.scores.ventilation}, light ${c.scores.lighting}, privacy ${c.scores.privacy}).`,
+    description: `${c.description}  ·  Seed ${c.seedName || c.strategyId}  ·  Layout score ${c.scores.total}/100 (vent ${c.scores.ventilation}, light ${c.scores.lighting}, privacy ${c.scores.privacy}).`,
     rooms: c.rooms,
     costMultiplier: c.costMultiplier,
   }));

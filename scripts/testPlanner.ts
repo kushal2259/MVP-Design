@@ -1,5 +1,6 @@
 import { generatePlan } from '../src/lib/planner';
 import { parseRequirementsLocal } from '../src/lib/planner/requirementParser';
+import { analyzeVastu } from '../src/lib/vastuEngine';
 import type { RoomLayout } from '../src/types';
 
 function overlaps(a: RoomLayout, b: RoomLayout): boolean {
@@ -33,7 +34,8 @@ for (const brief of briefs) {
   const plan = generatePlan(req);
   console.log(`  ${plan.options.length} options:`);
   plan.options.forEach(o => {
-    console.log(`  • ${o.name}  (cost x${o.costMultiplier})`);
+    const vastu = analyzeVastu(o.rooms, req.plotWidth, req.plotDepth);
+    console.log(`  • ${o.name}  (cost x${o.costMultiplier})  vastu=${vastu.score}/100`);
     for (let f = 0; f < req.floors; f++) totalOverlaps += checkFloor(o.rooms, f, o.id);
   });
   // diversity check: option-a vs option-b room name sets / sizes differ

@@ -1259,6 +1259,7 @@ function EngineeringTab({ project, layoutOptions, selectedLayoutId, type }: {
   type: 'electrical' | 'plumbing' | 'structural';
 }) {
   const [activeFloor, setActiveFloor] = useState<'ground' | 'first' | 'terrace'>('ground');
+  const [optionId, setOptionId] = useState<'option-a' | 'option-b' | 'option-c'>(selectedLayoutId);
   const req = project.requirements;
   const plotSettings: PlotSettings = project.plotSettings || {
     width: req.plotWidth, depth: req.plotDepth, location: req.location,
@@ -1270,8 +1271,14 @@ function EngineeringTab({ project, layoutOptions, selectedLayoutId, type }: {
     electrical: 'electrical', plumbing: 'plumbing', structural: 'structural',
   };
   const titles = { electrical: 'Electrical Plan', plumbing: 'Plumbing Plan', structural: 'Structural Plan' };
+  const approvals = {
+    electrical: 'Requires Licensed Electrical Engineer Approval',
+    plumbing: 'Requires Licensed Plumbing Engineer Approval',
+    structural: 'Requires Licensed Structural Engineer Approval',
+  };
 
-  const selectedRooms = layoutOptions?.find(l => l.id === selectedLayoutId)?.rooms;
+  // Engineering follows the chosen architectural option (switchable here).
+  const selectedRooms = layoutOptions?.find(l => l.id === optionId)?.rooms;
 
   // Fall back to legacy renderer if no Vastu rooms
   if (!selectedRooms || selectedRooms.length === 0) {
@@ -1307,7 +1314,7 @@ function EngineeringTab({ project, layoutOptions, selectedLayoutId, type }: {
 
   return (
     <div style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12, flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8, flexShrink: 0, flexWrap: 'wrap' }}>
         <SectionTitle>{titles[type]}</SectionTitle>
         <div style={{ display: 'flex', gap: 8 }}>
           {floorTabs.map(f => (
@@ -1321,6 +1328,28 @@ function EngineeringTab({ project, layoutOptions, selectedLayoutId, type }: {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Per-option engineering selector — each option has its own package */}
+      {layoutOptions && layoutOptions.length > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexShrink: 0, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Engineering for:</span>
+          {layoutOptions.map((o, i) => (
+            <button key={o.id} onClick={() => setOptionId(o.id)} style={{
+              padding: '5px 12px', borderRadius: 100, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+              border: `1.5px solid ${optionId === o.id ? 'var(--amber)' : 'var(--line-strong)'}`,
+              backgroundColor: optionId === o.id ? 'var(--amber)' : 'white',
+              color: optionId === o.id ? 'white' : 'var(--steel)', fontWeight: optionId === o.id ? 600 : 400,
+            }}>
+              {String.fromCharCode(65 + i)} · {o.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '6px 12px', borderRadius: 6, backgroundColor: '#fef2f2', border: '1px solid #fecaca', flexShrink: 0 }}>
+        <span style={{ fontSize: 12 }}>⚠</span>
+        <span style={{ fontSize: 11.5, color: '#b91c1c', fontWeight: 600 }}>{approvals[type]}</span>
+        <span style={{ fontSize: 11, color: '#7f1d1d' }}>— AI draft for the selected option ({optionId.replace('option-', 'Option ').toUpperCase()}). Not for construction.</span>
       </div>
       <div style={{ flex: 1, overflow: 'hidden', borderRadius: 8, border: '1px solid var(--line)' }}>
         <DrawingViewport
