@@ -26,6 +26,7 @@ const ThreeDViewer = dynamic(() => import('@/components/ThreeDViewer'), { ssr: f
 const ThreeDViewerV2 = dynamic(() => import('@/components/ThreeDViewerV2'), { ssr: false });
 const InteriorProductsCatalog = dynamic(() => import('@/components/InteriorProductsCatalog'), { ssr: false });
 const InteriorRenderView = dynamic(() => import('@/components/InteriorRenderView'), { ssr: false });
+const DrawingCatalogView = dynamic(() => import('@/components/DrawingCatalogView'), { ssr: false });
 
 const TABS: { id: ActiveTab; label: string; icon: string; group?: string }[] = [
   { id: 'overview', label: 'Overview', icon: '◎' },
@@ -39,6 +40,9 @@ const TABS: { id: ActiveTab; label: string; icon: string; group?: string }[] = [
   { id: 'structural', label: 'Structural', icon: '◐', group: 'Engineering' },
   { id: 'electrical', label: 'Electrical', icon: '⚡', group: 'Engineering' },
   { id: 'plumbing', label: 'Plumbing', icon: '◉', group: 'Engineering' },
+  { id: 'hvac', label: 'HVAC', icon: '❄', group: 'Engineering' },
+  { id: 'fire', label: 'Fire Safety', icon: '🜂', group: 'Engineering' },
+  { id: 'site', label: 'Site Plans', icon: '⊡', group: 'Engineering' },
   { id: 'cost', label: 'Cost Est.', icon: '₹', group: 'Estimates' },
   { id: 'boq', label: 'BOQ', icon: '≡', group: 'Estimates' },
   { id: 'timeline', label: 'Timeline', icon: '▷', group: 'Estimates' },
@@ -433,11 +437,18 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             )}
             {activeTab === 'vastu' && <VastuTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} />}
             {activeTab === 'sun-vent' && <SunVentTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} />}
-            {activeTab === 'structural' && <EngineeringTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} type="structural" />}
-            {activeTab === 'electrical' && <EngineeringTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} type="electrical" />}
-            {activeTab === 'plumbing' && <EngineeringTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} type="plumbing" />}
-            {activeTab === 'cost' && <CostTab project={project} />}
-            {activeTab === 'boq' && <BOQTab project={project} />}
+            {['structural', 'electrical', 'plumbing', 'hvac', 'fire', 'site'].includes(activeTab) && (
+              <DrawingCatalogView
+                discipline={activeTab as 'structural' | 'electrical' | 'plumbing' | 'hvac' | 'fire' | 'site'}
+                title={TABS.find(t => t.id === activeTab)?.label || ''}
+                layoutOptions={layoutOptions}
+                selectedLayoutId={selectedLayoutId}
+                settings={project.plotSettings || { width: project.requirements.plotWidth, depth: project.requirements.plotDepth, location: project.requirements.location, floors: project.requirements.floors, style: 'modern', budgetLakhs: project.requirements.budget, bedrooms: project.requirements.bhk, kitchenStyle: 'large', balconyRequired: true }}
+                floors={project.requirements.floors}
+              />
+            )}
+            {activeTab === 'cost' && <CostTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} />}
+            {activeTab === 'boq' && <BOQTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} />}
             {activeTab === 'timeline' && <TimelineTab project={project} />}
             {activeTab === 'compliance' && <ComplianceTab project={project} complianceData={complianceData} />}
             {activeTab === 'export' && <ExportTab project={project} />}
@@ -1393,16 +1404,36 @@ function MEPTab({ project, type }: { project: Project; type: 'electrical' | 'plu
   );
 }
 
-function CostTab({ project }: { project: Project }) {
+function optionBuiltUp(opt: LayoutOption | undefined): number {
+  if (!opt) return 0;
+  return Math.round(opt.rooms.filter(r => r.type !== 'parking' && r.type !== 'garden').reduce((s, r) => s + r.w * r.h, 0));
+}
+
+function CostTab({ project, layoutOptions, selectedLayoutId }: { project: Project; layoutOptions: LayoutOption[] | null; selectedLayoutId: 'option-a' | 'option-b' | 'option-c' }) {
   const cost = project.costEstimate;
+  const [optionId, setOptionId] = useState<'option-a' | 'option-b' | 'option-c'>(selectedLayoutId);
+  const opt = layoutOptions?.find(o => o.id === optionId);
+  const optBuiltUp = optionBuiltUp(opt) || cost?.builtUp || 0;
   if (!cost) return null;
 
   return (
     <div>
       <SectionTitle>Cost Estimation</SectionTitle>
-      <p style={{ color: 'var(--steel)', marginBottom: 32, fontWeight: 300 }}>
-        Based on {cost.builtUp?.toLocaleString()} sq.ft built-up area in {project.requirements.location}. Rates vary by material grade and market conditions.
+      <p style={{ color: 'var(--steel)', marginBottom: 16, fontWeight: 300 }}>
+        Per-option, city-wise estimate (incl. GST) for {project.requirements.location}. Rates vary by material grade and market conditions.
       </p>
+      {layoutOptions && layoutOptions.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Costing for:</span>
+          {layoutOptions.map((o, i) => (
+            <button key={o.id} onClick={() => setOptionId(o.id)} style={{
+              padding: '5px 12px', borderRadius: 100, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+              border: `1.5px solid ${optionId === o.id ? 'var(--amber)' : 'var(--line-strong)'}`,
+              backgroundColor: optionId === o.id ? 'var(--amber)' : 'white', color: optionId === o.id ? 'white' : 'var(--steel)', fontWeight: optionId === o.id ? 600 : 400,
+            }}>{String.fromCharCode(65 + i)} · {o.name} · {optionBuiltUp(o).toLocaleString()} sq ft</button>
+          ))}
+        </div>
+      )}
 
       {/* Three tier cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 200px), 1fr))', gap: 20, marginBottom: 40 }}>
@@ -1461,7 +1492,7 @@ function CostTab({ project }: { project: Project }) {
         </div>
       </div>
 
-      <IndiaCostPanel builtUp={cost.builtUp || 0} location={project.requirements.location} projectName={project.name} />
+      <IndiaCostPanel builtUp={optBuiltUp} location={project.requirements.location} projectName={`${project.name}_${optionId}`} />
     </div>
   );
 }
@@ -1593,69 +1624,83 @@ function IndiaCostPanel({ builtUp, location, projectName }: { builtUp: number; l
   );
 }
 
-function BOQTab({ project }: { project: Project }) {
-  const [tier, setTier] = useState<'economy' | 'standard' | 'premium'>('standard');
-  const boq = project.boq || [];
+function BOQTab({ project, layoutOptions, selectedLayoutId }: { project: Project; layoutOptions: LayoutOption[] | null; selectedLayoutId: 'option-a' | 'option-b' | 'option-c' }) {
+  const [tier, setTier] = useState<Tier>('standard');
+  const [optionId, setOptionId] = useState<'option-a' | 'option-b' | 'option-c'>(selectedLayoutId);
+  const opt = layoutOptions?.find(o => o.id === optionId);
+  const builtUp = optionBuiltUp(opt) || project.costEstimate?.builtUp || 1500;
+  const cb = generateDetailedBOQ(builtUp, project.requirements.location, tier);
 
-  const rateKey = tier === 'economy' ? 'rateEconomy' : tier === 'premium' ? 'ratePremium' : 'rateStandard';
-  const total = boq.reduce((s, item) => s + item.quantity * item[rateKey], 0);
+  const exportCSV = () => {
+    const csv = boqToCSV(cb, `${project.name}_${optionId}`);
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `${project.name}_${optionId}_BOQ.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
 
   return (
     <div>
       <SectionTitle>Bill of Quantities</SectionTitle>
+      <p style={{ color: 'var(--steel)', marginBottom: 14, fontWeight: 300 }}>
+        Per-option, contractor-grade BOQ for {cb.city} — {builtUp.toLocaleString()} sq ft built-up. Concrete, steel, masonry, finishes, MEP, doors & windows with GST.
+      </p>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
-        {(['economy', 'standard', 'premium'] as const).map(t => (
-          <button key={t} onClick={() => setTier(t)} style={{
-            padding: '8px 20px', borderRadius: 4,
-            border: `1.5px solid ${tier === t ? 'var(--blueprint)' : 'var(--line-strong)'}`,
-            backgroundColor: tier === t ? 'var(--blueprint)' : 'white',
-            color: tier === t ? 'white' : 'var(--steel)',
-            fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
-            textTransform: 'capitalize',
-          }}>{t}</button>
-        ))}
+      <div style={{ display: 'flex', gap: 16, marginBottom: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+        {layoutOptions && layoutOptions.length > 1 && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Option:</span>
+            {layoutOptions.map((o, i) => (
+              <button key={o.id} onClick={() => setOptionId(o.id)} style={{
+                padding: '5px 12px', borderRadius: 100, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+                border: `1.5px solid ${optionId === o.id ? 'var(--amber)' : 'var(--line-strong)'}`,
+                backgroundColor: optionId === o.id ? 'var(--amber)' : 'white', color: optionId === o.id ? 'white' : 'var(--steel)', fontWeight: optionId === o.id ? 600 : 400,
+              }}>{String.fromCharCode(65 + i)} · {optionBuiltUp(o).toLocaleString()} sqft</button>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 6 }}>
+          {(['economy', 'standard', 'premium'] as Tier[]).map(t => (
+            <button key={t} onClick={() => setTier(t)} style={{
+              padding: '6px 16px', borderRadius: 4, textTransform: 'capitalize', fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
+              border: `1.5px solid ${tier === t ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+              backgroundColor: tier === t ? 'var(--blueprint)' : 'white', color: tier === t ? 'white' : 'var(--steel)',
+            }}>{t}</button>
+          ))}
+        </div>
+        <button onClick={exportCSV} style={{ marginLeft: 'auto', padding: '6px 14px', borderRadius: 4, border: '1.5px solid #16a34a', backgroundColor: 'white', color: '#16a34a', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>⬇ Export BOQ (CSV)</button>
       </div>
 
       <div style={{ border: '1px solid var(--line)', borderRadius: 6, overflow: 'hidden', backgroundColor: 'white' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ backgroundColor: 'var(--blueprint)', color: 'white' }}>
-              <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>#</th>
-              <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>Material</th>
-              <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>Unit</th>
-              <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>Quantity</th>
-              <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>Rate (₹)</th>
-              <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 500, fontSize: 11, letterSpacing: '0.04em' }}>Amount (₹)</th>
+              {['Category', 'Item', 'Unit', 'Qty', 'Rate ₹', 'Amount ₹', 'GST'].map(h => (
+                <th key={h} style={{ padding: '11px 12px', textAlign: h === 'Item' || h === 'Category' ? 'left' : 'right', fontWeight: 500, fontSize: 11 }}>{h}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {boq.map((item, i) => {
-              const rate = item[rateKey];
-              const amount = item.quantity * rate;
-              return (
-                <tr key={i} style={{ backgroundColor: i % 2 === 0 ? 'white' : '#fafaf9', borderBottom: '1px solid var(--line)' }}>
-                  <td style={{ padding: '10px 16px', color: 'var(--steel)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{i + 1}</td>
-                  <td style={{ padding: '10px 16px', fontWeight: 400 }}>{item.material}</td>
-                  <td style={{ padding: '10px 16px', textAlign: 'right', color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>{item.unit}</td>
-                  <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{item.quantity.toLocaleString()}</td>
-                  <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{rate.toLocaleString()}</td>
-                  <td style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>₹{amount.toLocaleString()}</td>
-                </tr>
-              );
-            })}
+            {cb.boq.map((l, i) => (
+              <tr key={i} style={{ backgroundColor: i % 2 ? '#fafaf9' : 'white', borderBottom: '1px solid var(--line)' }}>
+                <td style={{ padding: '8px 12px', color: 'var(--steel)', fontSize: 11 }}>{l.category}</td>
+                <td style={{ padding: '8px 12px' }}>{l.item}</td>
+                <td style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>{l.unit}</td>
+                <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.qty.toLocaleString('en-IN')}</td>
+                <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.rate.toLocaleString('en-IN')}</td>
+                <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 500 }}>{formatINR(l.amount)}</td>
+                <td style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--steel)', fontFamily: 'var(--font-mono)' }}>{l.gstPct}%</td>
+              </tr>
+            ))}
             <tr style={{ backgroundColor: 'rgba(26,39,68,0.04)', borderTop: '2px solid var(--blueprint)' }}>
-              <td colSpan={5} style={{ padding: '14px 16px', fontWeight: 600, color: 'var(--blueprint)' }}>Total ({tier.charAt(0).toUpperCase() + tier.slice(1)})</td>
-              <td style={{ padding: '14px 16px', textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-display)', fontSize: 18, color: 'var(--blueprint)' }}>
-                ₹{(total / 100000).toFixed(1)}L
-              </td>
+              <td colSpan={5} style={{ padding: '12px', fontWeight: 600, color: 'var(--blueprint)' }}>Subtotal + GST {formatINR(cb.gstAmount)} → Grand Total ({tier})</td>
+              <td colSpan={2} style={{ padding: '12px', textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-display)', fontSize: 18, color: 'var(--blueprint)' }}>{formatINR(cb.total)}</td>
             </tr>
           </tbody>
         </table>
       </div>
-
-      <div style={{ marginTop: 16, fontSize: 12, color: 'var(--steel)', lineHeight: 1.7 }}>
-        * Quantities are approximate estimates based on thumb rules. Actual quantities require detailed drawings and site measurements. Labour costs are not included.
+      <div style={{ marginTop: 14, fontSize: 12, color: 'var(--steel)', lineHeight: 1.7 }}>
+        * Quantities use standard Indian thumb-rules from this option&apos;s built-up area; rates are 2026 city approximations incl. GST. Confirm with detailed drawings & site measurement.
       </div>
     </div>
   );
