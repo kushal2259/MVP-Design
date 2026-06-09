@@ -136,10 +136,38 @@ export function parseRequirementsText(text: string): Partial<PlotSettings> {
   return settings;
 }
 
+// Resilient Gemini call: retries transient 429/500/503 (model overloaded) with backoff.
+async function geminiGenerate(apiKey: string, prompt: string, retries = 3): Promise<string> {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      }
+      // Retry only on transient server/rate errors
+      if (![429, 500, 502, 503].includes(response.status) || attempt === retries) {
+        throw new Error(`API error ${response.status}`);
+      }
+    } catch (err) {
+      lastErr = err;
+      if (attempt === retries) throw err;
+    }
+    // exponential backoff with jitter: 0.6s, 1.4s, 2.6s …
+    await new Promise(r => setTimeout(r, 600 * (attempt + 1) + Math.random() * 400));
+  }
+  throw lastErr || new Error('Gemini request failed');
+}
+
 // Active Gemini API parser
 export async function parseRequirementsWithGemini(promptText: string, apiKey: string): Promise<Partial<PlotSettings>> {
   try {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     const promptInstructions = `
       You are an expert AI Architectural Assistant. Parse the following user request and extract design parameters.
       Return ONLY a raw JSON object matching the schema below. Do not include markdown code block formatting (no \`\`\`json).
@@ -160,21 +188,7 @@ export async function parseRequirementsWithGemini(promptText: string, apiKey: st
       User Request: "${promptText}"
     `;
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{ text: promptInstructions }]
-        }]
-      })
-    });
-
-    if (!response.ok) throw new Error(`API error ${response.status}`);
-    const data = await response.json();
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const rawText = await geminiGenerate(apiKey, promptInstructions);
     const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
   } catch (err) {
@@ -200,7 +214,6 @@ export async function parseChatEditWithGemini(
   }
 
   try {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     const promptInstructions = `
       You are an expert AI Architectural Copilot. The user is requesting modifications to their active plan.
       Analyze the user request and their current project settings. Return updated settings including customOverrides.
@@ -241,28 +254,14 @@ export async function parseChatEditWithGemini(
       }
     `;
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{ text: promptInstructions }]
-        }]
-      })
-    });
-
-    if (!response.ok) throw new Error(`API error ${response.status}`);
-    const data = await response.json();
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const rawText = await geminiGenerate(apiKey, promptInstructions);
     const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson);
   } catch (err) {
     console.error('Failed to parse chat edit with Gemini: ', err);
     return {
       updatedSettings: currentSettings,
-      message: "I could not reach the Gemini API. Please make sure your API key is correctly configured."
+      message: "The AI is busy right now (the model may be momentarily overloaded). Please try again in a few seconds."
     };
   }
 }
