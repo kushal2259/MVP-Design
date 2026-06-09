@@ -6,6 +6,7 @@ import type * as THREE_TYPES from 'three';
 interface Props {
   rooms: RoomLayout[];
   settings: PlotSettings;
+  floor?: number;
 }
 
 const FLOOR_HEIGHT = 10; // feet per floor
@@ -34,7 +35,7 @@ const ROOM_FLOOR_COLORS: Record<string, string> = {
   default:   '#c4bcb0',
 };
 
-export default function InteriorRenderView({ rooms, settings }: Props) {
+export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<import('three').WebGLRenderer | null>(null);
   const [activeRoom, setActiveRoom] = useState<string | null>(null);
@@ -57,8 +58,8 @@ export default function InteriorRenderView({ rooms, settings }: Props) {
         const H = canvasRef.current.clientHeight || 600;
 
         // ── Compute building bounding box (floor 0) for a dollhouse framing ──
-        const f0 = rooms.filter(r => r.floor === 0 && r.type !== 'garden' && r.type !== 'parking');
-        const bbRooms = f0.length ? f0 : rooms.filter(r => r.floor === 0);
+        const f0 = rooms.filter(r => r.floor === floor && r.type !== 'garden' && r.type !== 'parking');
+        const bbRooms = f0.length ? f0 : rooms.filter(r => r.floor === floor);
         const minX = Math.min(...bbRooms.map(r => r.x)) * FT;
         const maxX = Math.max(...bbRooms.map(r => r.x + r.w)) * FT;
         const minZ = Math.min(...bbRooms.map(r => r.y)) * FT;
@@ -122,7 +123,7 @@ export default function InteriorRenderView({ rooms, settings }: Props) {
         scene.add(fill);
 
         // Room accent lights
-        const rooms0 = rooms.filter(r => r.floor === 0);
+        const rooms0 = rooms.filter(r => r.floor === floor);
         rooms0.forEach(r => {
           const lx = (r.x + r.w / 2) * FT;
           const lz = (r.y + r.h / 2) * FT;
@@ -155,7 +156,7 @@ export default function InteriorRenderView({ rooms, settings }: Props) {
         const skirting = makeMat('#d4c4a8', 0.75);
 
         // ── BUILD ROOMS ───────────────────────────────────────
-        rooms.filter(r => r.floor === 0).forEach(r => {
+        rooms.filter(r => r.floor === floor).forEach(r => {
           const rx = r.x * FT, rz = r.y * FT;
           const rw = r.w * FT, rh = r.h * FT;
           const fh = FLOOR_HEIGHT * FT;
@@ -164,10 +165,10 @@ export default function InteriorRenderView({ rooms, settings }: Props) {
           const ft = floorMats[r.type] || floorMats.default;
 
           // Floor slab
-          const floor = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.15, rh), ft);
-          floor.position.set(rx + rw / 2, -0.075, rz + rh / 2);
-          floor.receiveShadow = true;
-          scene.add(floor);
+          const slab = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.15, rh), ft);
+          slab.position.set(rx + rw / 2, -0.075, rz + rh / 2);
+          slab.receiveShadow = true;
+          scene.add(slab);
 
           // NOTE: No ceiling — this is an open-roof dollhouse view so the camera
           // can look down into every room. (ceilingMat retained for skirting tone.)
@@ -361,7 +362,7 @@ export default function InteriorRenderView({ rooms, settings }: Props) {
         });
 
         // ── CEILING LIGHTS ────────────────────────────────────
-        rooms.filter(r => r.floor === 0).forEach(r => {
+        rooms.filter(r => r.floor === floor).forEach(r => {
           const lx = (r.x + r.w / 2) * FT, lz = (r.y + r.h / 2) * FT;
           const fh = FLOOR_HEIGHT * FT;
           const lightDisc = new THREE.Mesh(
@@ -410,7 +411,7 @@ export default function InteriorRenderView({ rooms, settings }: Props) {
       mounted = false;
       cleanup.then(fn => fn?.());
     };
-  }, [rooms, settings]);
+  }, [rooms, settings, floor]);
 
   if (error) return (
     <div style={{ padding: 32, color: '#ef4444', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
@@ -468,9 +469,9 @@ export default function InteriorRenderView({ rooms, settings }: Props) {
             textAlign: 'right',
           }}>
             <div style={{ color: '#7dd3fc', marginBottom: 2 }}>
-              {rooms.filter(r => r.floor === 0).length} rooms rendered
+              {rooms.filter(r => r.floor === floor).length} rooms rendered
             </div>
-            <div>{rooms.filter(r => r.floor === 0).reduce((s, r) => s + r.furniture.length, 0)} furniture items</div>
+            <div>{rooms.filter(r => r.floor === floor).reduce((s, r) => s + r.furniture.length, 0)} furniture items</div>
           </div>
         </div>
       )}

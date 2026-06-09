@@ -205,5 +205,6 @@ export type ActiveTab =
   | 'cost'
   | 'boq'
   | 'timeline'
+  | 'site-visits'
   | 'compliance'
   | 'export';

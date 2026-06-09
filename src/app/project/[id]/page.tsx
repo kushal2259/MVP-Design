@@ -11,6 +11,7 @@ import { analyzeVastu, DIRECTION_NAMES } from '@/lib/vastuEngine';
 import { analyzeByelaws } from '@/lib/byelawEngine';
 import { generateDetailedBOQ, calcEMI, formatINR, boqToCSV, type Tier } from '@/lib/costEngine';
 import { analyzeSunVent } from '@/lib/sunPathEngine';
+import { generateElevation, type ElevSide } from '@/lib/elevationGenerator';
 import { useIsMobile } from '@/lib/useIsMobile';
 import type { Project, ActiveTab, FloorPlan, PlotSettings, LayoutOption } from '@/types';
 import dynamic from 'next/dynamic';
@@ -27,6 +28,7 @@ const ThreeDViewerV2 = dynamic(() => import('@/components/ThreeDViewerV2'), { ss
 const InteriorProductsCatalog = dynamic(() => import('@/components/InteriorProductsCatalog'), { ssr: false });
 const InteriorRenderView = dynamic(() => import('@/components/InteriorRenderView'), { ssr: false });
 const DrawingCatalogView = dynamic(() => import('@/components/DrawingCatalogView'), { ssr: false });
+const SiteVisitsTab = dynamic(() => import('@/components/SiteVisitsTab'), { ssr: false });
 
 const TABS: { id: ActiveTab; label: string; icon: string; group?: string }[] = [
   { id: 'overview', label: 'Overview', icon: '◎' },
@@ -46,6 +48,7 @@ const TABS: { id: ActiveTab; label: string; icon: string; group?: string }[] = [
   { id: 'cost', label: 'Cost Est.', icon: '₹', group: 'Estimates' },
   { id: 'boq', label: 'BOQ', icon: '≡', group: 'Estimates' },
   { id: 'timeline', label: 'Timeline', icon: '▷', group: 'Estimates' },
+  { id: 'site-visits', label: 'Site Visits', icon: '◷', group: 'Admin' },
   { id: 'compliance', label: 'Compliance', icon: '✓' },
   { id: 'export', label: 'Export', icon: '↗' },
 ];
@@ -423,7 +426,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 selectedLayoutId={selectedLayoutId}
               />
             )}
-            {activeTab === 'elevations' && <ElevationsTab project={project} />}
+            {activeTab === 'elevations' && <ElevationsTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} />}
             {activeTab === 'interior' && (
               <InteriorTab
                 project={project}
@@ -450,6 +453,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             {activeTab === 'cost' && <CostTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} />}
             {activeTab === 'boq' && <BOQTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} />}
             {activeTab === 'timeline' && <TimelineTab project={project} />}
+            {activeTab === 'site-visits' && <SiteVisitsTab project={project} />}
             {activeTab === 'compliance' && <ComplianceTab project={project} complianceData={complianceData} />}
             {activeTab === 'export' && <ExportTab project={project} />}
           </div>
@@ -1072,62 +1076,123 @@ function ThreeDViewTab({ project, editedPlans, layoutOptions, selectedLayoutId }
   layoutOptions: LayoutOption[] | null;
   selectedLayoutId: 'option-a' | 'option-b' | 'option-c';
 }) {
-  const [viewType, setViewType] = useState<'exterior' | 'interior'>('exterior');
+  const [viewType, setViewType] = useState<'walkthrough' | 'interior'>('walkthrough');
+  const [optionId, setOptionId] = useState<'option-a' | 'option-b' | 'option-c'>(selectedLayoutId);
+  const [floor, setFloor] = useState(0);
   const req = project.requirements;
   const plotSettings: PlotSettings = project.plotSettings || {
     width: req.plotWidth, depth: req.plotDepth, location: req.location,
     floors: req.floors, style: 'modern', budgetLakhs: req.budget,
     bedrooms: req.bhk, kitchenStyle: 'large', balconyRequired: true,
   };
-  const selectedRooms = layoutOptions?.find(l => l.id === selectedLayoutId)?.rooms;
+  const opt = layoutOptions?.find(l => l.id === optionId);
+  const selectedRooms = opt?.rooms;
   const legacyPlans = editedPlans || project.floorPlans || [];
+  const chip = (active: boolean, accent = 'var(--blueprint)'): React.CSSProperties => ({
+    padding: '6px 14px', borderRadius: 100, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+    border: `1.5px solid ${active ? accent : 'var(--line-strong)'}`, backgroundColor: active ? accent : 'white',
+    color: active ? 'white' : 'var(--steel)', fontWeight: active ? 600 : 400,
+  });
 
   return (
     <div>
       <SectionTitle>3D View</SectionTitle>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        <button onClick={() => setViewType('exterior')} style={{
-          padding: '8px 20px', borderRadius: 4, fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
-          border: `1.5px solid ${viewType === 'exterior' ? 'var(--blueprint)' : 'var(--line-strong)'}`,
-          backgroundColor: viewType === 'exterior' ? 'var(--blueprint)' : 'white',
-          color: viewType === 'exterior' ? 'white' : 'var(--steel)',
-        }}>Exterior + Walkthrough</button>
-        <button onClick={() => setViewType('interior')} style={{
-          padding: '8px 20px', borderRadius: 4, fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
-          border: `1.5px solid ${viewType === 'interior' ? 'var(--amber)' : 'var(--line-strong)'}`,
-          backgroundColor: viewType === 'interior' ? 'var(--amber)' : 'white',
-          color: viewType === 'interior' ? 'white' : 'var(--steel)',
-        }}>Interior 3D View</button>
-      </div>
 
-      {viewType === 'exterior' && selectedRooms ? (
-        <div style={{ height: 600, border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden' }}>
-          <ThreeDViewerV2 rooms={selectedRooms} settings={plotSettings} />
+      {/* Mode + option (+ floor for dollhouse) selectors */}
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => setViewType('walkthrough')} style={chip(viewType === 'walkthrough')}>🚶 Walkthrough & Exterior</button>
+          <button onClick={() => setViewType('interior')} style={chip(viewType === 'interior', 'var(--amber)')}>🏠 Interior Render</button>
         </div>
-      ) : viewType === 'exterior' && legacyPlans.length > 0 ? (
+        {layoutOptions && layoutOptions.length > 1 && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Plan:</span>
+            {layoutOptions.map((o, i) => (
+              <button key={o.id} onClick={() => setOptionId(o.id)} style={chip(optionId === o.id, 'var(--amber)')}>{String.fromCharCode(65 + i)} · {o.name}</button>
+            ))}
+          </div>
+        )}
+        {viewType === 'interior' && req.floors > 1 && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Floor:</span>
+            {Array.from({ length: req.floors }, (_, f) => (
+              <button key={f} onClick={() => setFloor(f)} style={chip(floor === f)}>{f === 0 ? 'Ground' : f === 1 ? 'First' : 'Second'}</button>
+            ))}
+          </div>
+        )}
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--steel)', marginBottom: 16 }}>
+        {viewType === 'walkthrough'
+          ? 'Use the in-view controls: Orbit · First-Person Walk (WASD) · Cinematic Tour. Floor isolation (All/Ground/First) is in the viewer.'
+          : 'Open-roof furnished render of the selected plan & floor. Drag to orbit, scroll to zoom.'}
+      </p>
+
+      {viewType === 'walkthrough' && selectedRooms ? (
+        <div style={{ height: 600, border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden' }}>
+          <ThreeDViewerV2 key={optionId} rooms={selectedRooms} settings={plotSettings} />
+        </div>
+      ) : viewType === 'walkthrough' && legacyPlans.length > 0 ? (
         <ThreeDViewer floorPlans={legacyPlans} />
       ) : null}
 
       {viewType === 'interior' && selectedRooms ? (
-        <InteriorRenderView rooms={selectedRooms} settings={plotSettings} />
+        <InteriorRenderView key={`${optionId}-${floor}`} rooms={selectedRooms} settings={plotSettings} floor={floor} />
       ) : null}
     </div>
   );
 }
 
-function ElevationsTab({ project }: { project: Project }) {
+function ElevationsTab({ project, layoutOptions, selectedLayoutId }: { project: Project; layoutOptions: LayoutOption[] | null; selectedLayoutId: 'option-a' | 'option-b' | 'option-c' }) {
+  const [optionId, setOptionId] = useState<'option-a' | 'option-b' | 'option-c'>(selectedLayoutId);
+  const [side, setSide] = useState<ElevSide>('front');
+  const opt = layoutOptions?.find(o => o.id === optionId);
+  const ps = project.plotSettings || { width: project.requirements.plotWidth, depth: project.requirements.plotDepth, location: project.requirements.location, floors: project.requirements.floors, style: 'modern' as const, budgetLakhs: project.requirements.budget, bedrooms: project.requirements.bhk, kitchenStyle: 'large' as const, balconyRequired: true };
+
+  if (!opt) {
+    return (
+      <div>
+        <SectionTitle>Building Elevations</SectionTitle>
+        <ElevationRenderer req={project.requirements} />
+      </div>
+    );
+  }
+  const svg = generateElevation(opt.rooms, ps, side, project.requirements.style, project.requirements.floors);
+  const chip = (active: boolean, accent = 'var(--blueprint)'): React.CSSProperties => ({
+    padding: '5px 14px', borderRadius: 100, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+    border: `1.5px solid ${active ? accent : 'var(--line-strong)'}`, backgroundColor: active ? accent : 'white',
+    color: active ? 'white' : 'var(--steel)', fontWeight: active ? 600 : 400, textTransform: 'capitalize',
+  });
+
   return (
     <div>
       <SectionTitle>Building Elevations</SectionTitle>
-      <div style={{
-        padding: '12px 16px', marginBottom: 24,
-        backgroundColor: '#fff7ed', borderRadius: 6,
-        fontSize: 13, color: '#92400e',
-        border: '1px solid #fed7aa',
-      }}>
-        AI-generated concept elevations for reference. Exact dimensions may vary based on structural requirements.
+      <p style={{ color: 'var(--steel)', marginBottom: 14, fontWeight: 300 }}>
+        Plan-accurate concept elevations — each option produces a different façade because windows & the entrance line up with that option&apos;s rooms.
+      </p>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 14, alignItems: 'center' }}>
+        {layoutOptions && layoutOptions.length > 1 && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Option:</span>
+            {layoutOptions.map((o, i) => (
+              <button key={o.id} onClick={() => setOptionId(o.id)} style={chip(optionId === o.id, 'var(--amber)')}>{String.fromCharCode(65 + i)} · {o.name}</button>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Side:</span>
+          {(['front', 'rear', 'left', 'right'] as ElevSide[]).map(s => (
+            <button key={s} onClick={() => setSide(s)} style={chip(side === s)}>{s}</button>
+          ))}
+        </div>
       </div>
-      <ElevationRenderer req={project.requirements} />
+      <div style={{
+        padding: '10px 14px', marginBottom: 16, backgroundColor: '#fff7ed', borderRadius: 6,
+        fontSize: 12, color: '#92400e', border: '1px solid #fed7aa',
+      }}>
+        ⚠ AI-generated concept elevation. Final façade, heights & openings require an architect&apos;s detailing.
+      </div>
+      <div style={{ border: '1px solid var(--line)', borderRadius: 8, backgroundColor: '#eaf0f7', padding: 16, overflow: 'auto' }}
+        dangerouslySetInnerHTML={{ __html: svg }} />
     </div>
   );
 }
@@ -1785,7 +1850,8 @@ function TimelineTab({ project }: { project: Project }) {
 
 function ByelawPanel({ project }: { project: Project }) {
   const ps = project.plotSettings;
-  const opt = project.layoutOptions?.find(o => o.id === (project.selectedLayoutId || 'option-a')) || project.layoutOptions?.[0];
+  const [optionId, setOptionId] = useState<'option-a' | 'option-b' | 'option-c'>(project.selectedLayoutId || 'option-a');
+  const opt = project.layoutOptions?.find(o => o.id === optionId) || project.layoutOptions?.[0];
   if (!ps || !opt) return null;
   const report = analyzeByelaws(opt.rooms, ps);
   const sc = report.score >= 85 ? '#16a34a' : report.score >= 65 ? '#d97706' : '#dc2626';
@@ -1796,6 +1862,18 @@ function ByelawPanel({ project }: { project: Project }) {
 
   return (
     <div style={{ marginBottom: 32 }}>
+      {project.layoutOptions && project.layoutOptions.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Compliance for:</span>
+          {project.layoutOptions.map((o, i) => (
+            <button key={o.id} onClick={() => setOptionId(o.id)} style={{
+              padding: '5px 12px', borderRadius: 100, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+              border: `1.5px solid ${optionId === o.id ? 'var(--amber)' : 'var(--line-strong)'}`,
+              backgroundColor: optionId === o.id ? 'var(--amber)' : 'white', color: optionId === o.id ? 'white' : 'var(--steel)', fontWeight: optionId === o.id ? 600 : 400,
+            }}>{String.fromCharCode(65 + i)} · {o.name}</button>
+          ))}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 24, alignItems: 'center', padding: '20px 24px', border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', marginBottom: 20 }}>
         <ScoreRing score={report.score} label="Byelaw Score" color={sc} />
         <div style={{ flex: 1 }}>

@@ -201,9 +201,48 @@ export default function FloorPlanV2Renderer({ rooms, plotWidth, plotDepth, showF
             {room.windows.map(win => (
               <WindowMark key={win.id} win={win} rx={rx} ry={ry} rw={rw} rh={rh} sc={scale} />
             ))}
+
+            {/* MAIN ENTRANCE marker */}
+            {room.doors.filter(d => /entry|main/.test(d.id)).map(d => {
+              const dw = d.width * scale;
+              let lx = rx + rw / 2, ly = ry + rh + 16, ax = lx, ay = ry + rh + 4, tip = ry + rh;
+              if (d.side === 'front') { lx = rx + d.offset * scale + dw / 2; ly = ry + rh + 17; ax = lx; ay = ry + rh + 5; tip = ry + rh; }
+              else if (d.side === 'back') { lx = rx + d.offset * scale + dw / 2; ly = ry - 12; ax = lx; ay = ry - 5; tip = ry; }
+              else if (d.side === 'left') { lx = rx - 4; ly = ry + d.offset * scale + dw / 2; ax = rx - 6; ay = ly; tip = rx; }
+              else { lx = rx + rw + 4; ly = ry + d.offset * scale + dw / 2; ax = rx + rw + 6; ay = ly; tip = rx + rw; }
+              const horizontal = d.side === 'left' || d.side === 'right';
+              return (
+                <g key={`ent-${d.id}`} style={{ pointerEvents: 'none' }}>
+                  <line x1={ax} y1={ay} x2={d.side === 'front' || d.side === 'back' ? ax : tip} y2={d.side === 'front' || d.side === 'back' ? tip : ay} stroke="#c8853a" strokeWidth="2.5" />
+                  <circle cx={d.side === 'front' || d.side === 'back' ? ax : tip} cy={d.side === 'front' || d.side === 'back' ? tip : ay} r="2.5" fill="#c8853a" />
+                  <text x={lx} y={ly} textAnchor={horizontal ? (d.side === 'left' ? 'end' : 'start') : 'middle'} dominantBaseline="middle"
+                    fontSize="8" fontWeight="700" fill="#c8853a" fontFamily="monospace">▲ MAIN ENTRANCE</text>
+                </g>
+              );
+            })}
           </g>
         );
       })}
+
+      {/* Synthesized MAIN ENTRANCE marker (when no explicit entry door exists) */}
+      {(() => {
+        const hasEntry = rooms.some(r => r.doors?.some(d => /entry|main/.test(d.id)));
+        if (hasEntry) return null;
+        const candidates = rooms.filter(r => ['lobby', 'living', 'dining'].includes(r.type));
+        const pool = candidates.length ? candidates : rooms.filter(r => r.type !== 'parking' && r.type !== 'garden' && r.type !== 'balcony');
+        if (!pool.length) return null;
+        const room = pool.reduce((a, b) => (a.y + a.h >= b.y + b.h ? a : b)); // front-most (largest y+h)
+        const cx = BORDER + (room.x + room.w / 2) * scale;
+        const cy = BORDER + (room.y + room.h) * scale;
+        return (
+          <g style={{ pointerEvents: 'none' }}>
+            <rect x={cx - 1.5 * scale} y={cy - 2} width={3 * scale} height={4} fill="#c8853a" />
+            <line x1={cx} y1={cy + 4} x2={cx} y2={cy + 14} stroke="#c8853a" strokeWidth="2.5" />
+            <path d={`M${cx - 4},${cy + 8} L${cx},${cy + 4} L${cx + 4},${cy + 8}`} fill="none" stroke="#c8853a" strokeWidth="2" />
+            <text x={cx} y={cy + 26} textAnchor="middle" fontSize="9" fontWeight="700" fill="#c8853a" fontFamily="monospace">▲ MAIN ENTRANCE</text>
+          </g>
+        );
+      })()}
 
       {/* Compass rose */}
       <g transform={`translate(${svgW - 32}, ${BORDER + 24})`}>

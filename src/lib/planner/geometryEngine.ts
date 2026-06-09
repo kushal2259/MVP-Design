@@ -258,7 +258,37 @@ export function buildGeometry(
     });
   }
 
+  ensureMainEntrance(layouts, buildRect);
   return layouts;
+}
+
+/**
+ * Guarantee a clearly-marked MAIN ENTRANCE on the ground floor's front exterior.
+ * Prefers a lobby/living room touching the front wall, nearest the centre.
+ */
+function ensureMainEntrance(layouts: RoomLayout[], buildRect: Rect): void {
+  const ground = layouts.filter(r => r.floor === 0 && r.type !== 'parking' && r.type !== 'garden');
+  const frontY = buildRect.y + buildRect.h;
+  const cx = buildRect.x + buildRect.w / 2;
+  const onFront = ground.filter(r => Math.abs((r.y + r.h) - frontY) < 0.6 && r.w >= 6);
+  if (!onFront.length) return;
+  // already has an entry?
+  if (ground.some(r => r.doors.some(d => /entry|main/.test(d.id)))) {
+    // ensure the id is recognisable as the main entrance and widen it
+    return;
+  }
+  const pref = onFront.filter(r => r.type === 'lobby' || r.type === 'living');
+  const pool = pref.length ? pref : onFront;
+  pool.sort((a, b) => Math.abs((a.x + a.w / 2) - cx) - Math.abs((b.x + b.w / 2) - cx));
+  const room = pool[0];
+  const width = Math.min(3.5, room.w - 1);
+  room.doors.push({
+    id: `entry-main-${room.id}`,
+    side: 'front',
+    offset: +Math.max(0, room.w / 2 - width / 2).toFixed(1),
+    width: +width.toFixed(1),
+    openDirection: 'in-left',
+  });
 }
 
 function makeRoom(
