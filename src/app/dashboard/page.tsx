@@ -2,9 +2,11 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { getProjects, deleteProject, getCurrentUser, signOut } from '@/lib/store';
+import { getProjects, deleteProject, getCurrentUser, signOut, saveProject, generateId } from '@/lib/store';
+import { generateLayouts } from '@/lib/layoutSolver';
+import { generateFloorPlans, calculateSpaceAllocation, generateCostEstimate, generateBOQ, generateTimeline } from '@/lib/generator';
 import { useIsMobile } from '@/lib/useIsMobile';
-import type { Project } from '@/types';
+import type { Project, ProjectRequirements, PlotSettings } from '@/types';
 
 function StatusBadge({ status }: { status: Project['status'] }) {
   const cfg: Record<string, { bg: string; color: string; label: string }> = {
@@ -52,6 +54,33 @@ export default function DashboardPage() {
   const handleSignOut = async () => {
     await signOut();
     router.push('/');
+  };
+
+  const [loadingSample, setLoadingSample] = useState(false);
+  const loadSample = async () => {
+    setLoadingSample(true);
+    const req: ProjectRequirements = {
+      plotSize: 250, plotWidth: 50, plotDepth: 45, plotShape: 'rectangular',
+      location: 'Pune, Maharashtra', floors: 2, budget: 75, style: 'modern', bhk: 4,
+      specialRooms: ['Pooja Room', 'Home Office'],
+      requirements: 'Modern 4 BHK family home — large living & kitchen, vastu-aware, good cross-ventilation.',
+    };
+    const plotSettings: PlotSettings = {
+      width: 50, depth: 45, location: 'Pune, Maharashtra', floors: 2, style: 'modern',
+      budgetLakhs: 75, bedrooms: 4, kitchenStyle: 'large', balconyRequired: true,
+    };
+    const layoutOptions = generateLayouts(plotSettings);
+    const floorPlans = generateFloorPlans(req);
+    const costResult = generateCostEstimate(req, floorPlans);
+    const project: Project = {
+      id: generateId(), name: 'Sample — Modern 4 BHK Villa (Pune)', requirements: req,
+      status: 'generated', createdAt: new Date().toISOString(),
+      floorPlans, layoutOptions, selectedLayoutId: 'option-a', plotSettings,
+      costEstimate: costResult, boq: generateBOQ(costResult.builtUp || 1800), timeline: generateTimeline(req.floors),
+      analysis: { parsedRequirements: {}, validationNotes: [], spaceAllocation: calculateSpaceAllocation(floorPlans) },
+    };
+    await saveProject(project);
+    router.push(`/project/${project.id}`);
   };
 
   if (!mounted) {
@@ -131,10 +160,15 @@ export default function DashboardPage() {
               <path d="M7 21L21 7M7 7h14M7 7v14" stroke="var(--amber)" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 300, marginBottom: 16, color: 'var(--ink)' }}>No projects yet</h2>
-            <p style={{ color: 'var(--steel)', marginBottom: 32, fontSize: 16, fontWeight: 300 }}>Create your first architectural project to get started</p>
-            <Link href="/project/new" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 28px', borderRadius: 4, backgroundColor: 'var(--blueprint)', color: 'white', textDecoration: 'none', fontSize: 15, fontWeight: 500 }}>
-              Create Your First Project →
-            </Link>
+            <p style={{ color: 'var(--steel)', marginBottom: 32, fontSize: 16, fontWeight: 300 }}>Create your first architectural project — or load a ready-made sample to explore everything instantly.</p>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <Link href="/project/new" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 28px', borderRadius: 4, backgroundColor: 'var(--blueprint)', color: 'white', textDecoration: 'none', fontSize: 15, fontWeight: 500 }}>
+                Create Your First Project →
+              </Link>
+              <button onClick={loadSample} disabled={loadingSample} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 28px', borderRadius: 4, border: '1.5px solid var(--amber)', backgroundColor: 'white', color: 'var(--amber)', fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'var(--font-body)', opacity: loadingSample ? 0.6 : 1 }}>
+                {loadingSample ? 'Loading…' : '✨ Load Sample Project'}
+              </button>
+            </div>
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))', gap: isMobile ? 16 : 24 }}>

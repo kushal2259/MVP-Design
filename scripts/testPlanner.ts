@@ -43,10 +43,14 @@ for (const brief of briefs) {
     const k = g.find(r => r.type === 'kitchen'), d = g.find(r => r.type === 'dining');
     return k && d ? (sharesWall(k, d) ? 'YES' : 'no') : 'n/a';
   };
+  const entranceType = (rooms: RoomLayout[]) => {
+    const r = rooms.find(rm => rm.floor === 0 && rm.doors?.some(d => /entry|main/.test(d.id)));
+    return r ? r.type : 'none';
+  };
   plan.candidates.forEach((c, i) => {
     const o = plan.options[i];
     const s = c.scores;
-    console.log(`  • ${c.strategyName.padEnd(20)} total=${s.total} adj=${s.adjacency} priv=${s.privacy} circ=${s.circulation} vent=${s.ventilation} vastu=${s.vastu}  kitchen↔dining=${kdAdj(o.rooms)}`);
+    console.log(`  • ${c.strategyName.padEnd(20)} total=${s.total} adj=${s.adjacency} priv=${s.privacy} kitchen↔dining=${kdAdj(o.rooms)} entry-room=${entranceType(o.rooms)}`);
     for (let f = 0; f < req.floors; f++) totalOverlaps += checkFloor(o.rooms, f, o.id);
   });
   // diversity check: option-a vs option-b room name sets / sizes differ
@@ -58,3 +62,4 @@ for (const brief of briefs) {
 }
 console.log(`\nTOTAL OVERLAPS ACROSS ALL: ${totalOverlaps}`);
 console.log(totalOverlaps === 0 ? 'PASS ✓ no overlapping rooms' : 'FAIL ✗ overlaps detected');
+process.exit(totalOverlaps === 0 ? 0 : 1);

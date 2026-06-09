@@ -39,8 +39,12 @@ function slice(rect: Rect, items: RoomSpec[], variation: number, out: Map<string
   const areaA = groupA.reduce((s, r) => s + r.targetArea, 0);
   const frac = areaA / total;
 
+  // Choose the cut axis that keeps the SHORTER side of both children largest —
+  // this avoids long thin slivers (better, more buildable aspect ratios).
+  const vMin = Math.min(rect.w * frac, rect.w * (1 - frac), rect.h);       // vertical cut
+  const hMin = Math.min(rect.h * frac, rect.h * (1 - frac), rect.w);       // horizontal cut
   let rectA: Rect, rectB: Rect;
-  if (rect.w >= rect.h) {
+  if (vMin >= hMin) {
     const wA = rect.w * frac;
     rectA = { x: rect.x, y: rect.y, w: wA, h: rect.h };
     rectB = { x: rect.x + wA, y: rect.y, w: rect.w - wA, h: rect.h };
@@ -243,8 +247,9 @@ export function buildGeometry(
       vastuPlace(rect, slicers, rectMap);
     } else {
       // Adjacency-chain ordering (planning engine) → slicing places graph-
-      // adjacent rooms next to each other. Seed varies the candidate.
-      const ordered = adjacencyOrder(slicers, adjacency, strategy, rngFrom(seed));
+      // adjacent rooms next to each other. Reversed so the public/entry rooms
+      // (chain tail) land toward the FRONT and bedrooms toward the rear.
+      const ordered = adjacencyOrder(slicers, adjacency, strategy, rngFrom(seed)).reverse();
       slice(rect, ordered, variation, rectMap);
     }
 
@@ -258,37 +263,120 @@ export function buildGeometry(
     });
   }
 
-  ensureMainEntrance(layouts, buildRect);
+  ensureMainEntrance(layouts, buildRect, strategy.features.vastu, program.global.facing);
   return layouts;
 }
 
 /**
- * Guarantee a clearly-marked MAIN ENTRANCE on the ground floor's front exterior.
- * Prefers a lobby/living room touching the front wall, nearest the centre.
+ * Guarantee a clearly-marked MAIN ENTRANCE so you always enter via the FOYER or
+ * LIVING room (never a kitchen/dining/bedroom).
+ *   • Non-Vastu: front-exterior lobby→living (foyer first), nearest centre.
+ *   • Vastu: the North-East living/foyer (Ishanya entrance) on its exterior wall.
  */
-function ensureMainEntrance(layouts: RoomLayout[], buildRect: Rect): void {
+function ensureMainEntrance(layouts: RoomLayout[], buildRect: Rect, vastu: boolean, facing: 'N' | 'E' | 'S' | 'W' = 'S'): void {
   const ground = layouts.filter(r => r.floor === 0 && r.type !== 'parking' && r.type !== 'garden');
-  const frontY = buildRect.y + buildRect.h;
-  const cx = buildRect.x + buildRect.w / 2;
-  const onFront = ground.filter(r => Math.abs((r.y + r.h) - frontY) < 0.6 && r.w >= 6);
-  if (!onFront.length) return;
-  // already has an entry?
-  if (ground.some(r => r.doors.some(d => /entry|main/.test(d.id)))) {
-    // ensure the id is recognisable as the main entrance and widen it
-    return;
+  if (ground.some(r => r.doors.some(d => /entry|main/.test(d.id)))) return;
+  // Facing → which exterior side the road/entrance is on.
+  const facingSide: 'front' | 'back' | 'left' | 'right' =
+    facing === 'N' ? 'back' : facing === 'E' ? 'right' : facing === 'W' ? 'left' : 'front';
+
+  // Only a foyer/living may host the main entrance.
+  const entryRooms = ground.filter(r => r.type === 'lobby' || r.type === 'living');
+  if (!entryRooms.length) return;
+  const lobbyFirst = entryRooms.filter(r => r.type === 'lobby');
+  const candidates = lobbyFirst.length ? lobbyFirst : entryRooms;
+
+  const onExterior = (r: RoomLayout): ('front' | 'back' | 'left' | 'right')[] => {
+    const sides: ('front' | 'back' | 'left' | 'right')[] = [];
+    if (Math.abs((r.y + r.h) - (buildRect.y + buildRect.h)) < 0.6) sides.push('front');
+    if (Math.abs(r.y - buildRect.y) < 0.6) sides.push('back');
+    if (Math.abs(r.x - buildRect.x) < 0.6) sides.push('left');
+    if (Math.abs((r.x + r.w) - (buildRect.x + buildRect.w)) < 0.6) sides.push('right');
+    return sides;
+  };
+
+  let room: RoomLayout | undefined; let side: 'front' | 'back' | 'left' | 'right' = 'front';
+  if (vastu) {
+    // North-East = small y (back) + large x (right). Pick the NE-most foyer/living.
+    const scored = candidates.map(r => ({ r, s: (r.x + r.w / 2) - (r.y + r.h / 2) }))
+      .sort((a, b) => b.s - a.s);
+    for (const { r } of scored) {
+      const sides = onExterior(r).filter(s => s === 'back' || s === 'right' || s === 'front');
+      if (sides.length) { room = r; side = sides.includes('back') ? 'back' : sides.includes('right') ? 'right' : 'front'; break; }
+    }
   }
-  const pref = onFront.filter(r => r.type === 'lobby' || r.type === 'living');
-  const pool = pref.length ? pref : onFront;
-  pool.sort((a, b) => Math.abs((a.x + a.w / 2) - cx) - Math.abs((b.x + b.w / 2) - cx));
-  const room = pool[0];
-  const width = Math.min(3.5, room.w - 1);
+  if (!room) {
+    // Prefer the facing side, then front, then any exterior side.
+    const c0 = buildRect.x + buildRect.w / 2, cyc = buildRect.y + buildRect.h / 2;
+    const near = (r: RoomLayout) => Math.hypot((r.x + r.w / 2) - c0, (r.y + r.h / 2) - cyc);
+    for (const want of [facingSide, 'front', 'left', 'right', 'back'] as const) {
+      const hit = candidates.filter(r => onExterior(r).includes(want)).sort((a, b) => near(a) - near(b));
+      if (hit.length) { room = hit[0]; side = want; break; }
+    }
+  }
+  if (!room) return;
+  const wall = (side === 'front' || side === 'back') ? room.w : room.h;
+  const width = Math.min(3.5, wall - 1);
+  if (width < 2) return;
   room.doors.push({
     id: `entry-main-${room.id}`,
-    side: 'front',
-    offset: +Math.max(0, room.w / 2 - width / 2).toFixed(1),
+    side,
+    offset: +Math.max(0, wall / 2 - width / 2).toFixed(1),
     width: +width.toFixed(1),
     openDirection: 'in-left',
   });
+}
+
+// ── CUSTOM OVERRIDES (chat / CAD edits) — applied as a safe post-pass ─────────
+// Handles add-door, add-window, rename-room without breaking the tiling.
+// (resize-room is handled by the Revision Engine, which re-tiles.)
+export interface CustomOverrideInput {
+  type: 'add-door' | 'add-window' | 'resize-room' | 'rename-room';
+  roomId: string;
+  side?: 'front' | 'back' | 'left' | 'right';
+  offset?: number;
+  width?: number;
+  targetRoomId?: string;
+}
+
+function matchRoom(rooms: RoomLayout[], roomId: string): RoomLayout | undefined {
+  const q = (roomId || '').toLowerCase();
+  const typeHint =
+    q.includes('stair') ? 'staircase' : q.includes('toilet') || q.includes('bath') ? 'toilet'
+    : q.includes('kitchen') ? 'kitchen' : q.includes('dining') ? 'dining' : q.includes('living') ? 'living'
+    : q.includes('lobby') || q.includes('foyer') ? 'lobby' : q.includes('bedroom') || q.includes('bed') ? 'bedroom'
+    : q.includes('balcon') ? 'balcony' : '';
+  const onGround = rooms.filter(r => r.floor === 0);
+  if (typeHint) return onGround.find(r => r.type === typeHint) || rooms.find(r => r.type === typeHint);
+  return onGround.find(r => r.name.toLowerCase().includes(q)) || rooms.find(r => r.id === roomId);
+}
+
+export function applyOverrides(rooms: RoomLayout[], overrides?: CustomOverrideInput[]): RoomLayout[] {
+  if (!overrides?.length) return rooms;
+  for (const ov of overrides) {
+    const room = matchRoom(rooms, ov.roomId);
+    if (!room) continue;
+    if (ov.type === 'rename-room' && ov.targetRoomId) {
+      room.name = ov.targetRoomId;
+    } else if (ov.type === 'add-door') {
+      const side = ov.side || 'front';
+      const wall = (side === 'front' || side === 'back') ? room.w : room.h;
+      const width = Math.min(ov.width || 3, wall - 1);
+      if (width < 1.5) continue;
+      const offset = ov.offset != null ? Math.max(0, Math.min(wall - width, ov.offset)) : +(wall / 2 - width / 2).toFixed(1);
+      const id = `ovr-door-${room.id}-${side}-${Math.round(offset)}`;
+      if (!room.doors.some(d => d.id === id)) room.doors.push({ id, side, offset: +offset.toFixed(1), width: +width.toFixed(1), openDirection: 'in-left' });
+    } else if (ov.type === 'add-window') {
+      const side = ov.side || 'front';
+      const wall = (side === 'front' || side === 'back') ? room.w : room.h;
+      const width = Math.min(ov.width || 4, wall - 1);
+      if (width < 1.5) continue;
+      const offset = ov.offset != null ? Math.max(0, Math.min(wall - width, ov.offset)) : +(wall / 2 - width / 2).toFixed(1);
+      const id = `ovr-win-${room.id}-${side}-${Math.round(offset)}`;
+      if (!room.windows.some(w => w.id === id)) room.windows.push({ id, side, offset: +offset.toFixed(1), width: +width.toFixed(1) });
+    }
+  }
+  return rooms;
 }
 
 function makeRoom(

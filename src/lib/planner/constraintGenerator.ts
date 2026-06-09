@@ -118,6 +118,7 @@ export function generateProgram(req: ParsedRequirements): RoomProgram {
       minCorridorWidth: 3,
       minStairWidth: 3.5,
       targetFootprintSqft: floorFootprint,
+      facing: req.facing || 'S',
     },
   };
 }

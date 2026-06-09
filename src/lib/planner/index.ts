@@ -12,6 +12,7 @@ import { generateProgram } from './constraintGenerator';
 import { generateAdjacencyMatrix } from './adjacency';
 import { selectStrategies } from './strategies';
 import { optimizeDetailed } from './optimizer';
+import { applyOverrides, type CustomOverrideInput } from './geometryEngine';
 import { fromPlotSettings } from './requirementParser';
 
 export interface PlanResult {
@@ -46,10 +47,15 @@ export function generatePlan(req: ParsedRequirements): PlanResult {
   return { program, adjacency, candidates, options: candidatesToOptions(candidates), generated, accepted };
 }
 
-/** Drop-in deterministic replacement for the legacy generateLayouts(). */
+/** Drop-in deterministic replacement for the legacy generateLayouts().
+ *  Applies any chat/CAD customOverrides (doors/windows/renames) as a post-pass
+ *  so Copilot edits actually appear on every option. */
 export function generatePlanFromSettings(settings: PlotSettings): LayoutOption[] {
   const req = fromPlotSettings(settings);
-  return generatePlan(req).options;
+  const options = generatePlan(req).options;
+  const overrides = settings.customOverrides as CustomOverrideInput[] | undefined;
+  if (overrides?.length) options.forEach(o => applyOverrides(o.rooms, overrides));
+  return options;
 }
 
 export * from './types';
@@ -57,7 +63,7 @@ export { generateProgram } from './constraintGenerator';
 export { generateAdjacencyMatrix } from './adjacency';
 export { STRATEGIES, selectStrategies, getStrategy } from './strategies';
 export { optimize } from './optimizer';
-export { buildGeometry } from './geometryEngine';
+export { buildGeometry, applyOverrides, type CustomOverrideInput } from './geometryEngine';
 export { scoreLayout } from './scorer';
 export { parseRequirements, parseRequirementsLocal, fromPlotSettings } from './requirementParser';
 export { getAllRoomRules, setRoomRule, getRoomRule } from './ruleEngine';

@@ -7,19 +7,32 @@
 import type { RoomProgram, RoomSpec, AdjacencyMatrix, RoomType } from './types';
 
 // Relationship preferences expressed at the *type* level.
+// These encode well-known residential planning patterns ("architect clusters"):
+//   • Foyer → Living entry sequence
+//   • Kitchen–Dining–Living social triangle (with a utility/store off the kitchen)
+//   • Bedroom + en-suite bath private suite
 const TYPE_AFFINITY: Array<[RoomType, RoomType, number]> = [
+  // Entry sequence — you enter the foyer/living, never a service room
+  ['lobby', 'living', 0.97],
+  ['living', 'dining', 0.92],
+  // Kitchen–Dining–Utility cluster
   ['kitchen', 'dining', 1.0],
-  ['dining', 'living', 0.9],
-  ['living', 'lobby', 0.8],
-  ['lobby', 'staircase', 0.7],
-  ['corridor', 'bedroom', 0.9],
-  ['corridor', 'staircase', 0.6],
+  ['kitchen', 'corridor', 0.55],   // utility/store access off the kitchen
+  // Circulation spine
+  ['lobby', 'staircase', 0.75],
+  ['corridor', 'bedroom', 0.92],
+  ['corridor', 'staircase', 0.7],
+  ['corridor', 'lobby', 0.7],
+  // Outdoor connections
   ['living', 'balcony', 0.7],
   ['bedroom', 'balcony', 0.5],
-  ['bedroom', 'toilet', 0.8],
-  ['kitchen', 'living', -0.3],   // keep cooking smells away from formal living
+  // Private suite
+  ['bedroom', 'toilet', 0.9],
+  // Negative (keep apart)
+  ['kitchen', 'living', -0.2],
   ['toilet', 'kitchen', -0.6],
   ['toilet', 'dining', -0.7],
+  ['toilet', 'living', -0.5],
   ['parking', 'lobby', 0.4],
 ];
 

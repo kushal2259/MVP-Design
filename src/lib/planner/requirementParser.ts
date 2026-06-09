@@ -75,13 +75,17 @@ export function parseRequirementsLocal(text: string): ParsedRequirements {
   if (/light|sunlight|natural\s*light|bright/.test(t)) priorities.push('lighting');
   if (/open|spacious/.test(t)) priorities.push('open-space');
 
+  const facing: ParsedRequirements['facing'] =
+    /east[\s-]*fac/.test(t) ? 'E' : /west[\s-]*fac/.test(t) ? 'W'
+    : /north[\s-]*fac/.test(t) ? 'N' : /south[\s-]*fac/.test(t) ? 'S' : 'S';
+
   return {
     plotArea, unit, plotWidth, plotDepth, floors, bedrooms,
     bathrooms: Math.max(2, Math.ceil(bedrooms * 0.75)),
     style, budgetLakhs, location: '',
     kitchen, livingRoom,
     balconyRequired: !/no balcon/.test(t),
-    specialRooms, priorities, vastu: /vastu/.test(t), raw: text,
+    specialRooms, priorities, vastu: /vastu/.test(t), facing, raw: text,
   };
 }
 
@@ -130,6 +134,6 @@ export function fromPlotSettings(s: PlotSettings): ParsedRequirements {
     kitchen: s.kitchenStyle,
     livingRoom: 'standard',
     balconyRequired: s.balconyRequired,
-    specialRooms: [], priorities: [], vastu: false, raw: '',
+    specialRooms: [], priorities: [], vastu: false, facing: 'S', raw: '',
   };
 }

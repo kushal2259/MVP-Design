@@ -136,8 +136,24 @@ export function parseRequirementsText(text: string): Partial<PlotSettings> {
   return settings;
 }
 
-// Resilient Gemini call: retries transient 429/500/503 (model overloaded) with backoff.
+// Resilient Gemini call. Prefers the server-side /api/ai proxy (so the key
+// never touches the browser + caching); falls back to a direct, retrying call
+// using the client-supplied key (e.g. for offline/script use).
 async function geminiGenerate(apiKey: string, prompt: string, retries = 3): Promise<string> {
+  // 1) Try the server proxy first (browser only — relative URL).
+  if (typeof window !== 'undefined') {
+    try {
+      const r = await fetch('/api/ai', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      });
+      if (r.ok) { const d = await r.json(); if (d?.text) return d.text as string; }
+      // 501 = server key not configured → fall through to direct client call.
+    } catch { /* fall through */ }
+  }
+  if (!apiKey) throw new Error('No AI key available (configure GEMINI_API_KEY on the server, or paste a key).');
+
+  // 2) Direct call with retry/backoff.
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
   let lastErr: unknown = null;
   for (let attempt = 0; attempt <= retries; attempt++) {

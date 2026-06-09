@@ -31,6 +31,7 @@ export interface ParsedRequirements {
   specialRooms: string[];       // e.g. ['pooja', 'study', 'store']
   priorities: string[];         // e.g. ['privacy', 'ventilation', 'vastu']
   vastu: boolean;
+  facing: 'N' | 'E' | 'S' | 'W'; // plot/entrance facing direction
   raw: string;
 }
 
@@ -82,6 +83,7 @@ export interface GlobalConstraints {
   minCorridorWidth: number;
   minStairWidth: number;
   targetFootprintSqft: number;  // per-floor built area target
+  facing: 'N' | 'E' | 'S' | 'W';
 }
 
 /** Weighted adjacency graph between room *ids*. weight 0..1, negative = avoid. */

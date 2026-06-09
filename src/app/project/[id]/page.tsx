@@ -239,6 +239,25 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 </span>
               </>
             )}
+            <button
+              title="Re-run the latest planning engine on this plot (refreshes all options)"
+              onClick={async () => {
+                const ps = project.plotSettings;
+                if (!ps) { alert('Generate a design first.'); return; }
+                const layouts = generateLayouts(ps);
+                setLayoutOptions(layouts);
+                setSelectedLayoutId('option-a');
+                const updated = { ...project, layoutOptions: layouts, selectedLayoutId: 'option-a' as const };
+                setProject(updated);
+                await saveProject(updated);
+              }}
+              style={{
+                padding: isMobile ? '6px 10px' : '6px 14px', borderRadius: 4,
+                border: '1.5px solid var(--line-strong)', background: 'white', color: 'var(--steel)',
+                fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: 'var(--font-body)',
+              }}>
+              ↻ {isMobile ? '' : 'Regenerate'}
+            </button>
             <button onClick={() => setActiveTab('export')} style={{
               padding: isMobile ? '6px 12px' : '6px 16px', borderRadius: 4,
               border: '1.5px solid var(--blueprint)',

@@ -67,6 +67,22 @@ export default function DrawingCatalogView({ discipline, title, layoutOptions, s
     const a = document.createElement('a'); a.href = url; a.download = `${title}_${optionId}_${drawing.id}.svg`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   };
+  const exportPDF = () => {
+    const content = viewRef.current?.innerHTML || '';
+    const win = window.open('', '_blank');
+    if (!win) { alert('Allow pop-ups to export PDF.'); return; }
+    win.document.write(`<!DOCTYPE html><html><head><title>${title} — ${drawing.name}</title>
+      <style>@media print{.no-print{display:none}} body{font-family:monospace;margin:24px;color:#1a2744}
+      .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #1a2744;padding-bottom:8px;margin-bottom:16px}
+      .warn{background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;padding:8px 12px;border-radius:6px;margin-bottom:16px;font-size:12px}
+      svg,table{max-width:100%}</style></head><body>
+      <div class="hdr"><div><strong>${drawing.name}</strong><br>${title} · ${optionId.replace('option-','Option ').toUpperCase()} · ${project_name()}</div>
+      <button class="no-print" onclick="window.print()" style="padding:8px 16px;cursor:pointer">🖨 Save as PDF</button></div>
+      <div class="warn">⚠ ${APPROVAL[discipline]} — AI draft concept. Not for construction.</div>
+      ${content}</body></html>`);
+    win.document.close();
+  };
+  const project_name = () => new Date().toLocaleDateString('en-IN');
 
   const chip = (active: boolean): React.CSSProperties => ({
     padding: '5px 12px', borderRadius: 100, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
@@ -99,6 +115,7 @@ export default function DrawingCatalogView({ discipline, title, layoutOptions, s
           </div>
         )}
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+          <button onClick={exportPDF} style={{ ...chip(false), borderColor: 'var(--blueprint)', color: 'var(--blueprint)' }}>⬇ PDF</button>
           <button onClick={() => exportRaster('image/png')} style={{ ...chip(false), borderColor: 'var(--blueprint)', color: 'var(--blueprint)' }}>⬇ PNG</button>
           <button onClick={() => exportRaster('image/jpeg')} style={{ ...chip(false), borderColor: 'var(--blueprint)', color: 'var(--blueprint)' }}>⬇ JPG</button>
           <button onClick={exportSVG} style={{ ...chip(false), borderColor: 'var(--blueprint)', color: 'var(--blueprint)' }}>⬇ SVG</button>
