@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Project } from '@/types';
 import { getProjectVisits, saveProjectVisits } from '@/lib/store';
+import { supabase } from '@/lib/supabase';
 
 type Status = 'scheduled' | 'completed' | 'cancelled';
 type Stage = 'Site Prep' | 'Excavation' | 'Foundation' | 'Plinth' | 'Superstructure' | 'Brickwork' | 'Roofing' | 'Plastering' | 'Flooring' | 'MEP' | 'Finishing' | 'Handover';
@@ -12,6 +13,8 @@ interface Visit {
   id: string;
   date: string; time: string;
   purpose: string; assignedTo: string;
+  reminderEmail: string;            // who gets reminders
+  remindersSent: string[];          // 'day-before' | '9am' | 'hour-before'
   stage: Stage; status: Status;
   progressPct: number;
   weather: string; labourCount: number;
@@ -33,7 +36,7 @@ export default function SiteVisitsTab({ project }: { project: Project }) {
   const [filter, setFilter] = useState<'all' | Status>('all');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [draft, setDraft] = useState({ date: today(), time: '10:00', purpose: '', assignedTo: '', stage: 'Foundation' as Stage });
+  const [draft, setDraft] = useState({ date: today(), time: '10:00', purpose: '', assignedTo: '', reminderEmail: '', stage: 'Foundation' as Stage });
   const [commentText, setCommentText] = useState('');
   const [commentAuthor, setCommentAuthor] = useState('Architect');
 
@@ -70,13 +73,14 @@ export default function SiteVisitsTab({ project }: { project: Project }) {
     if (!draft.purpose.trim()) { alert('Add a purpose for the visit.'); return; }
     const v: Visit = {
       id: uid(), date: draft.date, time: draft.time, purpose: draft.purpose.trim(), assignedTo: draft.assignedTo.trim() || '—',
+      reminderEmail: draft.reminderEmail.trim(), remindersSent: [],
       stage: draft.stage, status: 'scheduled', progressPct: 0, weather: '', labourCount: 0,
       workDone: '', issues: '', materials: '', nextSteps: '', photos: [], comments: [],
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     };
     persist([v, ...visits]);
     setShowForm(false);
-    setDraft({ date: today(), time: '10:00', purpose: '', assignedTo: '', stage: 'Foundation' });
+    setDraft({ date: today(), time: '10:00', purpose: '', assignedTo: '', reminderEmail: '', stage: 'Foundation' });
   };
   const updateVisit = (id: string, patch: Partial<Visit>) =>
     persist(visits.map(v => v.id === id ? { ...v, ...patch, updatedAt: new Date().toISOString() } : v));
@@ -96,6 +100,21 @@ export default function SiteVisitsTab({ project }: { project: Project }) {
   };
   const removePhoto = (id: string, pid: string) =>
     updateVisit(id, { photos: (visits.find(v => v.id === id)?.photos || []).filter(p => p.id !== pid) });
+
+  const sendTestReminder = async (v: Visit) => {
+    if (!v.reminderEmail) { alert('Add a Reminder Email to this visit first.'); return; }
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      const res = await fetch('/api/reminders/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ to: v.reminderEmail, projectName: project.name, purpose: v.purpose, date: v.date, time: v.time, stage: v.stage, assignedTo: v.assignedTo }),
+      });
+      const j = await res.json();
+      alert(res.ok ? `✓ Test reminder sent to ${v.reminderEmail}` : `Failed: ${j.error || res.status}`);
+    } catch (e) { alert('Failed to send: ' + e); }
+  };
 
   const shown = visits.filter(v => filter === 'all' || v.status === filter)
     .sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -152,7 +171,9 @@ export default function SiteVisitsTab({ project }: { project: Project }) {
             <div><label style={labelS}>Time</label><input type="time" style={inputS} value={draft.time} onChange={e => setDraft(d => ({ ...d, time: e.target.value }))} /></div>
             <div><label style={labelS}>Stage</label><select style={inputS} value={draft.stage} onChange={e => setDraft(d => ({ ...d, stage: e.target.value as Stage }))}>{STAGES.map(s => <option key={s}>{s}</option>)}</select></div>
             <div><label style={labelS}>Assigned To</label><input style={inputS} placeholder="Architect / Engineer name" value={draft.assignedTo} onChange={e => setDraft(d => ({ ...d, assignedTo: e.target.value }))} /></div>
+            <div><label style={labelS}>Reminder Email</label><input type="email" style={inputS} placeholder="who gets reminders" value={draft.reminderEmail} onChange={e => setDraft(d => ({ ...d, reminderEmail: e.target.value }))} /></div>
             <div style={{ gridColumn: '1 / -1' }}><label style={labelS}>Purpose</label><input style={inputS} placeholder="e.g. Inspect footing reinforcement before pour" value={draft.purpose} onChange={e => setDraft(d => ({ ...d, purpose: e.target.value }))} /></div>
+            <div style={{ gridColumn: '1 / -1', fontSize: 11, color: 'var(--steel)' }}>📧 Reminders auto-send <b>1 day before</b>, at <b>9 AM on the day</b>, and <b>1 hour before</b> the visit.</div>
           </div>
           <button onClick={addVisit} style={{ marginTop: 16, padding: '9px 22px', borderRadius: 6, border: 'none', backgroundColor: 'var(--blueprint)', color: 'white', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>✓ Add Visit</button>
         </div>
@@ -179,6 +200,7 @@ export default function SiteVisitsTab({ project }: { project: Project }) {
               </div>
               <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 100, color: 'white', backgroundColor: STATUS_COLOR[v.status], textTransform: 'uppercase' }}>{v.status}</span>
               <div style={{ display: 'flex', gap: 6 }}>
+                {v.status === 'scheduled' && v.reminderEmail && <button onClick={() => sendTestReminder(v)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid var(--blueprint)', background: 'white', color: 'var(--blueprint)', fontSize: 11, cursor: 'pointer' }} title={`Send a test reminder to ${v.reminderEmail}`}>✉ Test</button>}
                 {v.status === 'scheduled' && <button onClick={() => updateVisit(v.id, { status: 'completed' })} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid #16a34a', background: 'white', color: '#16a34a', fontSize: 11, cursor: 'pointer' }}>✓ Complete</button>}
                 <button onClick={() => setEditingId(open ? null : v.id)} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid var(--line-strong)', background: 'white', color: 'var(--steel)', fontSize: 11, cursor: 'pointer' }}>{open ? 'Close' : 'Report ✎'}</button>
                 {v.status !== 'cancelled' && <button onClick={() => updateVisit(v.id, { status: 'cancelled' })} style={{ padding: '5px 10px', borderRadius: 5, border: '1px solid #d97706', background: 'white', color: '#d97706', fontSize: 11, cursor: 'pointer' }}>Cancel</button>}
