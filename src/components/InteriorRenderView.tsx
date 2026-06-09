@@ -38,9 +38,52 @@ const ROOM_FLOOR_COLORS: Record<string, string> = {
 export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<import('three').WebGLRenderer | null>(null);
-  const [activeRoom, setActiveRoom] = useState<string | null>(null);
+  const sceneRef = useRef<import('three').Scene | null>(null);
+  const cameraRef = useRef<import('three').PerspectiveCamera | null>(null);
+  const composerRef = useRef<{ render: () => void; setSize: (w: number, h: number) => void } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [mode, setMode] = useState<'orbit' | 'cinematic'>('orbit');
+  const [tod, setTod] = useState(0);          // 0 = bright day … 1 = night
+  const [recording, setRecording] = useState(false);
+  const modeRef = useRef(mode); modeRef.current = mode;
+  const todRef = useRef(tod); todRef.current = tod;
+
+  // ── 🎥 Record the cinematic tour as a downloadable WebM reel ──
+  const recordReel = () => {
+    const cv = rendererRef.current?.domElement as HTMLCanvasElement | undefined;
+    if (!cv || typeof (cv as HTMLCanvasElement & { captureStream?: unknown }).captureStream !== 'function') {
+      alert('Recording is not supported in this browser.'); return;
+    }
+    setMode('cinematic'); modeRef.current = 'cinematic';
+    const stream = (cv as HTMLCanvasElement & { captureStream: (fps: number) => MediaStream }).captureStream(30);
+    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
+    const chunks: Blob[] = [];
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    rec.onstop = () => {
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'interior-walkthrough.webm';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+      setRecording(false);
+    };
+    setRecording(true);
+    rec.start();
+    setTimeout(() => rec.state !== 'inactive' && rec.stop(), 12000); // ~12s reel
+  };
+
+  // ── ⬇ Export the model as GLB for D5 / Lumion / Blender ──
+  const exportGLB = async () => {
+    if (!sceneRef.current) return;
+    const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js');
+    new GLTFExporter().parse(sceneRef.current, (gltf) => {
+      const blob = new Blob([gltf as ArrayBuffer], { type: 'model/gltf-binary' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'interior-model.glb';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    }, (err) => { console.error('GLB export failed', err); alert('GLB export failed.'); }, { binary: true });
+  };
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -71,11 +114,17 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
         // Scene — bright neutral studio backdrop so interiors read clearly
         const scene = new THREE.Scene();
         scene.background = new THREE.Color('#e9ecf2');
+        sceneRef.current = scene;
 
         // Camera — elevated "dollhouse" angle looking down into the open-roof rooms
         const camera = new THREE.PerspectiveCamera(50, W / H, 0.1, 2000);
         camera.position.set(cx + span * 0.85, span * 1.05, cz + span * 0.95);
         camera.lookAt(cx, 0, cz);
+        cameraRef.current = camera;
+
+        // Collectors for runtime day/night lighting
+        const pointLights: import('three').PointLight[] = [];
+        const lightDiscs: import('three').Mesh[] = [];
 
         // Renderer
         const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -100,7 +149,8 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
         controls.update();
 
         // ── LIGHTING (bright, even — this is a client-facing showcase) ──
-        scene.add(new THREE.AmbientLight('#ffffff', 0.55));
+        const ambient = new THREE.AmbientLight('#ffffff', 0.55);
+        scene.add(ambient);
         const hemi = new THREE.HemisphereLight('#dce6ff', '#f0e2c8', 0.9);
         scene.add(hemi);
 
@@ -132,6 +182,7 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
           pointLight.position.set(lx, ly, lz);
           pointLight.castShadow = false;
           scene.add(pointLight);
+          pointLights.push(pointLight);
         });
 
         // ── MATERIALS ──────────────────────────────────────────
@@ -371,15 +422,76 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
           );
           lightDisc.position.set(lx, fh - 0.04, lz);
           scene.add(lightDisc);
+          lightDiscs.push(lightDisc);
         });
+
+        // ── POSTPROCESSING: bloom for glowing windows/lights (cinematic look) ──
+        let composer: { render: () => void; setSize: (w: number, h: number) => void; dispose?: () => void } | null = null;
+        let bloom: { strength: number } | null = null;
+        try {
+          const [{ EffectComposer }, { RenderPass }, { UnrealBloomPass }, { OutputPass }] = await Promise.all([
+            import('three/examples/jsm/postprocessing/EffectComposer.js'),
+            import('three/examples/jsm/postprocessing/RenderPass.js'),
+            import('three/examples/jsm/postprocessing/UnrealBloomPass.js'),
+            import('three/examples/jsm/postprocessing/OutputPass.js'),
+          ]);
+          const c = new EffectComposer(renderer);
+          c.addPass(new RenderPass(scene, camera));
+          const b = new UnrealBloomPass(new THREE.Vector2(W, H), 0.55, 0.6, 0.85);
+          c.addPass(b);
+          c.addPass(new OutputPass());
+          composer = c; bloom = b;
+        } catch { composer = null; }
+        composerRef.current = composer;
+
+        // ── CINEMATIC SPLINE: a smooth drone-style fly-around the home ──
+        const R = span * 1.25, baseH = span * 0.5;
+        const pts: import('three').Vector3[] = [];
+        for (let i = 0; i < 10; i++) {
+          const a = (i / 10) * Math.PI * 2;
+          pts.push(new THREE.Vector3(
+            cx + Math.cos(a) * R * (0.85 + 0.25 * Math.sin(a * 2)),
+            baseH + span * 0.5 * (0.5 + 0.5 * Math.sin(a * 1.5)),
+            cz + Math.sin(a) * R * (0.85 + 0.25 * Math.cos(a * 2)),
+          ));
+        }
+        const curve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.5);
+        let u = 0;
+
+        // ── Day → golden-hour → night lighting applied each frame ──
+        const dayBg = new THREE.Color('#e9ecf2'), nightBg = new THREE.Color('#0d1330');
+        const sunDay = new THREE.Color('#fff5e0'), sunDusk = new THREE.Color('#ff8a3a');
+        const applyTOD = (t: number) => {
+          const day = 1 - t;
+          (scene.background as import('three').Color).lerpColors(dayBg, nightBg, t);
+          ambient.intensity = 0.5 * day + 0.12;
+          hemi.intensity = 0.9 * day + 0.12;
+          sun.intensity = Math.max(0.04, 1.6 * day);
+          sun.color.lerpColors(sunDay, sunDusk, Math.min(1, t * 1.4));
+          fill.intensity = 0.5 * day + 0.08;
+          pointLights.forEach(p => { p.intensity = 0.45 * day + 1.8 * t; });
+          lightDiscs.forEach(d => { const m = (d.material as import('three').MeshStandardMaterial); m.emissiveIntensity = 0.6 + 2.4 * t; });
+          if (bloom) bloom.strength = 0.45 + 0.7 * t;
+        };
 
         if (mounted) setLoading(false);
 
         // Animate
+        let last = performance.now();
         const animate = () => {
           animId = requestAnimationFrame(animate);
-          controls.update();
-          renderer.render(scene, camera);
+          const now = performance.now(); const dt = Math.min(0.05, (now - last) / 1000); last = now;
+          if (modeRef.current === 'cinematic') {
+            controls.enabled = false;
+            u = (u + dt * 0.035) % 1;
+            camera.position.copy(curve.getPointAt(u));
+            camera.lookAt(cx, span * 0.18, cz);
+          } else {
+            controls.enabled = true;
+            controls.update();
+          }
+          applyTOD(todRef.current);
+          if (composer) composer.render(); else renderer.render(scene, camera);
         };
         animate();
 
@@ -390,12 +502,14 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
           camera.aspect = w / h;
           camera.updateProjectionMatrix();
           renderer.setSize(w, h);
+          composer?.setSize(w, h);
         };
         window.addEventListener('resize', onResize);
 
         return () => {
           window.removeEventListener('resize', onResize);
           cancelAnimationFrame(animId);
+          composer?.dispose?.();
           renderer.dispose();
           if (canvasRef.current && renderer.domElement.parentNode === canvasRef.current) {
             canvasRef.current.removeChild(renderer.domElement);
@@ -442,6 +556,38 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
       )}
 
       <div ref={canvasRef} style={{ width: '100%', height: '100%' }} />
+
+      {/* Cinematic control bar */}
+      {!loading && (
+        <div style={{
+          position: 'absolute', top: 14, left: 14, right: 14, display: 'flex', gap: 10,
+          alignItems: 'center', flexWrap: 'wrap',
+        }}>
+          <div style={{ display: 'flex', gap: 6, backgroundColor: 'rgba(10,10,20,0.72)', padding: 4, borderRadius: 100, backdropFilter: 'blur(6px)' }}>
+            {(['orbit', 'cinematic'] as const).map(m => (
+              <button key={m} onClick={() => setMode(m)} style={{
+                padding: '6px 14px', borderRadius: 100, border: 'none', cursor: 'pointer', fontSize: 12, fontFamily: 'var(--font-body)',
+                backgroundColor: mode === m ? 'var(--amber)' : 'transparent', color: mode === m ? '#1a1a2e' : '#cbd5e1', fontWeight: mode === m ? 700 : 400,
+              }}>{m === 'orbit' ? '🖱 Orbit' : '🎬 Cinematic'}</button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', backgroundColor: 'rgba(10,10,20,0.72)', padding: '6px 12px', borderRadius: 100, backdropFilter: 'blur(6px)' }}>
+            <span style={{ fontSize: 13 }}>☀️</span>
+            <input type="range" min={0} max={1} step={0.01} value={tod} onChange={e => setTod(+e.target.value)} style={{ width: 110, accentColor: 'var(--amber)' }} title="Day → Night" />
+            <span style={{ fontSize: 13 }}>🌙</span>
+          </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button onClick={recordReel} disabled={recording} style={{
+              padding: '6px 14px', borderRadius: 100, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-body)',
+              backgroundColor: recording ? '#dc2626' : 'rgba(10,10,20,0.72)', color: 'white', backdropFilter: 'blur(6px)',
+            }}>{recording ? '● Recording…' : '🎥 Record Reel'}</button>
+            <button onClick={exportGLB} style={{
+              padding: '6px 14px', borderRadius: 100, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-body)',
+              backgroundColor: 'rgba(10,10,20,0.72)', color: '#cbd5e1', backdropFilter: 'blur(6px)',
+            }}>⬇ GLB</button>
+          </div>
+        </div>
+      )}
 
       {/* HUD */}
       {!loading && (
