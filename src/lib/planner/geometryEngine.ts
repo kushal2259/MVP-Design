@@ -16,39 +16,9 @@ import type {
 } from './types';
 import type { DoorConfig, WindowConfig, FurnitureConfig } from '@/types';
 import { strongNeighbors } from './adjacency';
+import { adjacencyOrder, rngFrom } from './planningEngine';
 
 interface Rect { x: number; y: number; w: number; h: number; }
-
-const EPS = 0.01;
-
-// ── Room ordering (drives spatial arrangement → strategy diversity) ──────────
-function orderRooms(rooms: RoomSpec[], strategy: DesignStrategy): RoomSpec[] {
-  const zoneRank = (z: string) => {
-    const i = strategy.zoneOrder.indexOf(z as DesignStrategy['zoneOrder'][number]);
-    return i < 0 ? 99 : i;
-  };
-  const base = [...rooms].sort((a, b) =>
-    (zoneRank(a.zone) - zoneRank(b.zone)) ||
-    (b.priority - a.priority) ||
-    (b.targetArea - a.targetArea),
-  );
-  // Pull each bedroom's attached bath immediately after it (hard adjacency).
-  const out: RoomSpec[] = [];
-  const used = new Set<string>();
-  const baths = rooms.filter(r => r.type === 'toilet');
-  let bathPtr = 0;
-  for (const r of base) {
-    if (used.has(r.id)) continue;
-    out.push(r); used.add(r.id);
-    if (r.type === 'bedroom') {
-      const bath = baths[bathPtr++];
-      if (bath && !used.has(bath.id)) { out.push(bath); used.add(bath.id); }
-    }
-  }
-  // any remaining (unpaired baths etc.)
-  for (const r of base) if (!used.has(r.id)) { out.push(r); used.add(r.id); }
-  return out;
-}
 
 // ── Recursive area-proportional slicing ──────────────────────────────────────
 function slice(rect: Rect, items: RoomSpec[], variation: number, out: Map<string, Rect>): void {
@@ -233,6 +203,7 @@ export function buildGeometry(
   strategy: DesignStrategy,
   adjacency: AdjacencyMatrix,
   variation = 0,
+  seed = 1,
 ): RoomLayout[] {
   const { setbacks } = program.buildable;
   const usableW = program.buildable.width - setbacks.left - setbacks.right;
@@ -260,28 +231,20 @@ export function buildGeometry(
 
   // ── INTERIOR per floor (slicing) ──
   for (let floor = 0; floor < program.floors; floor++) {
-    const interior = program.rooms.filter(r => r.floor === floor && r.zone !== 'outdoor' || (r.floor === floor && r.type === 'balcony'));
-    if (!interior.length) continue;
-
-    // carve a balcony strip on the building's front edge if a balcony exists
-    let rect = { ...buildRect };
-    const balconies = interior.filter(r => r.type === 'balcony');
-    const slicers = interior.filter(r => r.type !== 'balcony');
-    if (balconies.length) {
-      const bDepth = Math.min(5, rect.h * 0.12);
-      const bWidth = rect.w * 0.5;
-      const b = balconies[0];
-      layouts.push(makeRoom(b, { x: rect.x, y: rect.y + rect.h - bDepth, w: bWidth, h: bDepth }, buildRect, adjacency, []));
-      // shrink only the left half's bottom — simplest: shrink whole rect height a touch
-      rect = { ...rect, h: rect.h - bDepth * (bWidth / rect.w) };
-    }
+    // All interior rooms (incl. balconies) are tiled into the footprint — this
+    // keeps the partition gap-free and overlap-free.
+    const slicers = program.rooms.filter(r => r.floor === floor && r.type !== 'parking' && r.type !== 'garden');
+    if (!slicers.length) continue;
+    const rect = { ...buildRect };
 
     const rectMap = new Map<string, Rect>();
     if (strategy.features.vastu) {
       // Direction-aware placement (Ashtadik) for the Vastu strategy.
       vastuPlace(rect, slicers, rectMap);
     } else {
-      const ordered = orderRooms(slicers, strategy);
+      // Adjacency-chain ordering (planning engine) → slicing places graph-
+      // adjacent rooms next to each other. Seed varies the candidate.
+      const ordered = adjacencyOrder(slicers, adjacency, strategy, rngFrom(seed));
       slice(rect, ordered, variation, rectMap);
     }
 

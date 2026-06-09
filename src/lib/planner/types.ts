@@ -125,6 +125,20 @@ export interface CandidateScores {
   total: number;               // weighted 0..100
 }
 
+/** Output of the Architectural Quality Engine (critic). */
+export interface QualityReport {
+  adjacency: number;
+  privacy: number;
+  circulation: number;
+  ventilation: number;
+  lighting: number;
+  spaceUtilization: number;
+  structural: number;
+  vastu: number;
+  total: number;
+  accept: boolean;
+}
+
 export interface LayoutCandidate {
   strategyId: string;
   strategyName: string;
@@ -132,7 +146,7 @@ export interface LayoutCandidate {
   description: string;
   costMultiplier: number;
   rooms: RoomLayout[];
-  scores: CandidateScores;
+  scores: QualityReport;
   seedName?: string;            // e.g. "courtyard_v3" — reproducible design seed
 }
 

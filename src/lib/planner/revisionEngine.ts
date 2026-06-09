@@ -7,11 +7,12 @@
 //
 //  The LLM, if used upstream, only produces RevisionIntent — never geometry.
 // ============================================================================
-import type { RoomProgram, AdjacencyMatrix, DesignStrategy, LayoutCandidate, RoomSpec } from './types';
+import type { RoomProgram, AdjacencyMatrix, DesignStrategy, LayoutCandidate, RoomSpec, RoomLayout } from './types';
 import { buildGeometry } from './geometryEngine';
-import { scoreLayout } from './scorer';
+import { evaluate } from './qualityEngine';
 import { getStrategy } from './strategies';
 import { clampArea } from './ruleEngine';
+import { analyzeVastu } from '../vastuEngine';
 
 export interface RevisionIntent {
   /** e.g. 'kitchen' or a specific room name fragment to target. */
@@ -56,7 +57,7 @@ export function applyRevision(
     const rooms = buildGeometry(next, strategy, adjacency, 0);
     return {
       program: next,
-      candidate: makeCandidate(strategy, rooms, buildableArea(next)),
+      candidate: makeCandidate(strategy, rooms, next, adjacency),
       summary: `No room matched "${intent.targetMatch}"; layout left unchanged.`,
     };
   }
@@ -90,7 +91,7 @@ export function applyRevision(
 
   // 4) Re-run geometry for the whole building (stable seed → consistent look)
   const rooms = buildGeometry(next, strategy, adjacency, 0);
-  const candidate = makeCandidate(strategy, rooms, buildableArea(next));
+  const candidate = makeCandidate(strategy, rooms, next, adjacency);
 
   const pct = Math.round((target.targetArea / before - 1) * 100);
   const summary = `${target.name} ${pct >= 0 ? 'increased' : 'reduced'} by ${Math.abs(pct)}% to ${Math.round(target.targetArea)} sq ft; ` +
@@ -99,7 +100,9 @@ export function applyRevision(
   return { program: next, candidate, summary };
 }
 
-function makeCandidate(strategy: DesignStrategy, rooms: LayoutCandidate['rooms'], ba: number): LayoutCandidate {
+function makeCandidate(strategy: DesignStrategy, rooms: RoomLayout[], program: RoomProgram, adjacency: AdjacencyMatrix): LayoutCandidate {
+  const ba = buildableArea(program);
+  const vastu = analyzeVastu(rooms, program.buildable.width, program.buildable.depth).score;
   return {
     strategyId: strategy.id,
     strategyName: strategy.name,
@@ -107,6 +110,6 @@ function makeCandidate(strategy: DesignStrategy, rooms: LayoutCandidate['rooms']
     description: strategy.description,
     costMultiplier: strategy.costMultiplier,
     rooms,
-    scores: scoreLayout(rooms, strategy.weights, ba),
+    scores: evaluate(rooms, adjacency, ba, vastu, { vastuEmphasis: strategy.features.vastu }),
   };
 }

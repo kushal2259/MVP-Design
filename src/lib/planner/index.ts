@@ -11,7 +11,7 @@ import type { ParsedRequirements, RoomProgram, AdjacencyMatrix, LayoutCandidate 
 import { generateProgram } from './constraintGenerator';
 import { generateAdjacencyMatrix } from './adjacency';
 import { selectStrategies } from './strategies';
-import { optimize } from './optimizer';
+import { optimizeDetailed } from './optimizer';
 import { fromPlotSettings } from './requirementParser';
 
 export interface PlanResult {
@@ -19,6 +19,8 @@ export interface PlanResult {
   adjacency: AdjacencyMatrix;
   candidates: LayoutCandidate[];
   options: LayoutOption[];
+  generated: number;
+  accepted: number;
 }
 
 const OPTION_IDS: LayoutOption['id'][] = ['option-a', 'option-b', 'option-c'];
@@ -28,7 +30,7 @@ export function candidatesToOptions(candidates: LayoutCandidate[]): LayoutOption
     id: OPTION_IDS[i],
     name: c.strategyName,
     tagline: c.tagline,
-    description: `${c.description}  ·  Seed ${c.seedName || c.strategyId}  ·  Layout score ${c.scores.total}/100 (vent ${c.scores.ventilation}, light ${c.scores.lighting}, privacy ${c.scores.privacy}).`,
+    description: `${c.description}  ·  Seed ${c.seedName || c.strategyId}  ·  Score ${c.scores.total}/100 (adjacency ${c.scores.adjacency}, privacy ${c.scores.privacy}, circulation ${c.scores.circulation}, vent ${c.scores.ventilation}, vastu ${c.scores.vastu}).`,
     rooms: c.rooms,
     costMultiplier: c.costMultiplier,
   }));
@@ -38,9 +40,10 @@ export function candidatesToOptions(candidates: LayoutCandidate[]): LayoutOption
 export function generatePlan(req: ParsedRequirements): PlanResult {
   const program = generateProgram(req);
   const adjacency = generateAdjacencyMatrix(program);
-  const strategies = selectStrategies(req.priorities, req.vastu, 4);
-  const candidates = optimize(program, adjacency, strategies, 3);
-  return { program, adjacency, candidates, options: candidatesToOptions(candidates) };
+  // Explore broadly (more strategies → the critic picks the best diverse 3).
+  const strategies = selectStrategies(req.priorities, req.vastu, 6);
+  const { candidates, generated, accepted } = optimizeDetailed(program, adjacency, strategies, 3);
+  return { program, adjacency, candidates, options: candidatesToOptions(candidates), generated, accepted };
 }
 
 /** Drop-in deterministic replacement for the legacy generateLayouts(). */

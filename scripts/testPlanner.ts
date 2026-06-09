@@ -4,8 +4,10 @@ import { analyzeVastu } from '../src/lib/vastuEngine';
 import type { RoomLayout } from '../src/types';
 
 function overlaps(a: RoomLayout, b: RoomLayout): boolean {
-  return a.x < b.x + b.w - 0.1 && a.x + a.w > b.x + 0.1 &&
-         a.y < b.y + b.h - 0.1 && a.y + a.h > b.y + 0.1;
+  // 0.3 ft (~3.5") tolerance absorbs 1-decimal rounding on shared wall edges
+  const t = 0.3;
+  return a.x < b.x + b.w - t && a.x + a.w > b.x + t &&
+         a.y < b.y + b.h - t && a.y + a.h > b.y + t;
 }
 
 function checkFloor(rooms: RoomLayout[], floor: number, label: string) {
@@ -32,10 +34,19 @@ for (const brief of briefs) {
   console.log(`\nBRIEF: "${brief}"`);
   console.log(`  parsed: ${req.bedrooms}BHK ${req.floors}fl ${req.plotWidth}x${req.plotDepth} ${req.style}`);
   const plan = generatePlan(req);
-  console.log(`  ${plan.options.length} options:`);
-  plan.options.forEach(o => {
-    const vastu = analyzeVastu(o.rooms, req.plotWidth, req.plotDepth);
-    console.log(`  • ${o.name}  (cost x${o.costMultiplier})  vastu=${vastu.score}/100`);
+  console.log(`  generated ${plan.generated} candidates, ${plan.accepted} passed the critic → ${plan.candidates.length} options:`);
+  const sharesWall = (a: RoomLayout, b: RoomLayout) =>
+    (Math.abs((a.x + a.w) - b.x) < 0.4 || Math.abs((b.x + b.w) - a.x) < 0.4) && Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 2.5 ||
+    (Math.abs((a.y + a.h) - b.y) < 0.4 || Math.abs((b.y + b.h) - a.y) < 0.4) && Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 2.5;
+  const kdAdj = (rooms: RoomLayout[]) => {
+    const g = rooms.filter(r => r.floor === 0);
+    const k = g.find(r => r.type === 'kitchen'), d = g.find(r => r.type === 'dining');
+    return k && d ? (sharesWall(k, d) ? 'YES' : 'no') : 'n/a';
+  };
+  plan.candidates.forEach((c, i) => {
+    const o = plan.options[i];
+    const s = c.scores;
+    console.log(`  • ${c.strategyName.padEnd(20)} total=${s.total} adj=${s.adjacency} priv=${s.privacy} circ=${s.circulation} vent=${s.ventilation} vastu=${s.vastu}  kitchen↔dining=${kdAdj(o.rooms)}`);
     for (let f = 0; f < req.floors; f++) totalOverlaps += checkFloor(o.rooms, f, o.id);
   });
   // diversity check: option-a vs option-b room name sets / sizes differ
