@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn, signUp, sendPasswordReset, getCurrentUser } from '@/lib/store';
+import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/lib/useIsMobile';
 
 const FEATURES = [
@@ -56,9 +57,33 @@ function HomePageInner() {
   const [fpEmail, setFpEmail] = useState('');
   const [fpMsg, setFpMsg] = useState('');
 
+  // Catch password-recovery links that land here. Supabase falls back to the
+  // Site URL (this homepage) when the /reset-password path isn't honored, and
+  // it silently signs the user in with the recovery token. Detect that and
+  // forward to the reset form instead of showing the logged-in site.
+  const [recovering, setRecovering] = useState(false);
+  useEffect(() => {
+    const url = typeof window !== 'undefined' ? window.location.href : '';
+    if (url.includes('type=recovery')) {
+      setRecovering(true);
+      const hash = window.location.hash || '';
+      router.replace('/reset-password' + hash);
+    }
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setRecovering(true);
+        router.replace('/reset-password' + (window.location.hash || ''));
+      }
+    });
+    return () => sub.subscription.unsubscribe();
+  }, [router]);
+
   useEffect(() => {
     setMounted(true);
     (async () => {
+      // While a recovery redirect is in flight, don't treat the recovery
+      // session as a normal login.
+      if (typeof window !== 'undefined' && window.location.href.includes('type=recovery')) return;
       const u = await getCurrentUser();
       if (u) { setUser(u); return; }
       const auth = searchParams.get('auth');
@@ -112,6 +137,14 @@ function HomePageInner() {
     if (!res.ok) { setFpMsg(res.error || 'Error'); return; }
     setFpMsg('✓ Password reset link sent! Check your email inbox.');
   };
+
+  if (recovering) {
+    return (
+      <main style={{ fontFamily: 'var(--font-body)', backgroundColor: 'var(--paper)', color: 'var(--steel)', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        Opening password reset…
+      </main>
+    );
+  }
 
   return (
     <main style={{ fontFamily: 'var(--font-body)', backgroundColor: 'var(--paper)', color: 'var(--ink)', minHeight: '100vh', overflowX: 'hidden' }}>
