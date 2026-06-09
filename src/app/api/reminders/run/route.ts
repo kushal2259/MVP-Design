@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { SUPABASE_URL } from '@/lib/supabase';
 import { sendMail, reminderEmailHtml } from '@/lib/email';
 
 // ============================================================================
@@ -48,12 +49,11 @@ async function run(req: NextRequest) {
   if (!isVercelCron && secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !service) {
+  if (!service) {
     return NextResponse.json({ error: 'SUPABASE_SERVICE_ROLE_KEY not configured (needed to read all visits).' }, { status: 501 });
   }
-  const admin = createClient(url, service, { auth: { persistSession: false } });
+  const admin = createClient(SUPABASE_URL, service, { auth: { persistSession: false } });
 
   const { data: rows, error } = await admin.from('project_visits').select('project_id, user_id, data');
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
