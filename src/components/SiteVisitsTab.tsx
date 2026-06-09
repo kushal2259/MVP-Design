@@ -106,13 +106,20 @@ export default function SiteVisitsTab({ project }: { project: Project }) {
     try {
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
+      if (!token) { alert('Please sign in again, then retry.'); return; }
       const res = await fetch('/api/reminders/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ to: v.reminderEmail, projectName: project.name, purpose: v.purpose, date: v.date, time: v.time, stage: v.stage, assignedTo: v.assignedTo }),
       });
-      const j = await res.json();
-      alert(res.ok ? `✓ Test reminder sent to ${v.reminderEmail}` : `Failed: ${j.error || res.status}`);
+      const raw = await res.text();
+      let j: { ok?: boolean; error?: string } = {};
+      try { j = raw ? JSON.parse(raw) : {}; } catch { /* non-JSON / empty body */ }
+      if (res.ok && j.ok) { alert(`✓ Test reminder sent to ${v.reminderEmail}`); return; }
+      const reason = j.error || (res.status === 504
+        ? 'Email server timed out. Check EMAIL_HOST_USER / EMAIL_HOST_PASSWORD are set in Vercel and the Gmail App Password is correct.'
+        : `Server returned ${res.status}${raw ? '' : ' with an empty response'}.`);
+      alert(`Failed to send: ${reason}`);
     } catch (e) { alert('Failed to send: ' + e); }
   };
 

@@ -13,8 +13,15 @@ function getTransporter() {
   if (!user || !pass) return null;
   if (!transporter) {
     transporter = nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
       auth: { user, pass },
+      // Fail fast (well under the serverless function limit) so the API returns
+      // a clean JSON error instead of the function timing out with an empty body.
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 12000,
     });
   }
   return transporter;

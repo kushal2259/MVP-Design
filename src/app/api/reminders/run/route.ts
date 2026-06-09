@@ -14,6 +14,9 @@ import { sendMail, reminderEmailHtml } from '@/lib/email';
 //  Requires SUPABASE_SERVICE_ROLE_KEY to read all users' visits (bypasses RLS).
 // ============================================================================
 
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
 const WINDOWS = ['day-before', '9am', 'hour-before'] as const;
 type Win = typeof WINDOWS[number];
 

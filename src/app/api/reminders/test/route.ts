@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { sendMail, reminderEmailHtml } from '@/lib/email';
 
+export const runtime = 'nodejs';
+export const maxDuration = 30;
+
 // Sends a one-off TEST reminder. Requires a valid Supabase session (so it can't
 // be abused as an open mail relay).
 export async function POST(req: NextRequest) {
@@ -20,14 +23,18 @@ export async function POST(req: NextRequest) {
   const { to, projectName, purpose, date, time, stage, assignedTo } = body;
   if (!to) return NextResponse.json({ error: 'Missing recipient' }, { status: 400 });
 
-  const r = await sendMail({
-    to,
-    subject: `🏗 [TEST] Site visit reminder — ${projectName || 'Project'}`,
-    html: reminderEmailHtml({
-      projectName: projectName || 'Project', purpose: purpose || '—', date: date || '', time: time || '',
-      stage: stage || '—', assignedTo: assignedTo || '—', when: 'This is a TEST reminder',
-    }),
-  });
-  if (!r.ok) return NextResponse.json({ error: r.error }, { status: 503 });
-  return NextResponse.json({ ok: true });
+  try {
+    const r = await sendMail({
+      to,
+      subject: `🏗 [TEST] Site visit reminder — ${projectName || 'Project'}`,
+      html: reminderEmailHtml({
+        projectName: projectName || 'Project', purpose: purpose || '—', date: date || '', time: time || '',
+        stage: stage || '—', assignedTo: assignedTo || '—', when: 'This is a TEST reminder',
+      }),
+    });
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: 503 });
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
 }
