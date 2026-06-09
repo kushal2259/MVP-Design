@@ -133,3 +133,26 @@ export async function deleteProject(id: string): Promise<void> {
 export function generateId(): string {
   return `proj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
+
+// ============================================================================
+//  SITE VISITS  (public.project_visits — one JSONB row per project, RLS-protected)
+// ============================================================================
+export async function getProjectVisits<T = unknown>(projectId: string): Promise<T[]> {
+  const { data, error } = await supabase
+    .from('project_visits')
+    .select('data')
+    .eq('project_id', projectId)
+    .maybeSingle();
+  if (error) { console.error('getProjectVisits:', error.message); throw error; }
+  return ((data as { data: T[] } | null)?.data ?? []);
+}
+
+export async function saveProjectVisits<T = unknown>(projectId: string, visits: T[]): Promise<void> {
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) throw new Error('not authenticated');
+  const { error } = await supabase
+    .from('project_visits')
+    .upsert({ project_id: projectId, user_id: userId, data: visits, updated_at: new Date().toISOString() }, { onConflict: 'project_id,user_id' });
+  if (error) { console.error('saveProjectVisits:', error.message); throw error; }
+}

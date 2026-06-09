@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import type { Project } from '@/types';
+import { getProjectVisits, saveProjectVisits } from '@/lib/store';
 
 type Status = 'scheduled' | 'completed' | 'cancelled';
 type Stage = 'Site Prep' | 'Excavation' | 'Foundation' | 'Plinth' | 'Superstructure' | 'Brickwork' | 'Roofing' | 'Plastering' | 'Flooring' | 'MEP' | 'Finishing' | 'Handover';
@@ -36,11 +37,33 @@ export default function SiteVisitsTab({ project }: { project: Project }) {
   const [commentText, setCommentText] = useState('');
   const [commentAuthor, setCommentAuthor] = useState('Architect');
 
-  useEffect(() => {
-    try { const raw = localStorage.getItem(key); if (raw) setVisits(JSON.parse(raw)); } catch { /* ignore */ }
-  }, [key]);
+  const [synced, setSynced] = useState<'cloud' | 'local'>('local');
 
-  const persist = useCallback((next: Visit[]) => { setVisits(next); localStorage.setItem(key, JSON.stringify(next)); }, [key]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cloud = await getProjectVisits<Visit>(project.id);
+        if (cancelled) return;
+        setSynced('cloud');
+        if (cloud.length) { setVisits(cloud); return; }
+        // migrate any local-only visits to the cloud on first load
+        const raw = localStorage.getItem(key);
+        if (raw) { const local = JSON.parse(raw) as Visit[]; if (local.length) { setVisits(local); saveProjectVisits(project.id, local).catch(() => {}); } }
+      } catch {
+        // Supabase table missing / offline → fall back to localStorage
+        try { const raw = localStorage.getItem(key); if (raw && !cancelled) setVisits(JSON.parse(raw)); } catch { /* ignore */ }
+        if (!cancelled) setSynced('local');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [key, project.id]);
+
+  const persist = useCallback((next: Visit[]) => {
+    setVisits(next);
+    localStorage.setItem(key, JSON.stringify(next));           // always cache locally
+    saveProjectVisits(project.id, next).catch(() => {});       // sync to Supabase (best-effort)
+  }, [key, project.id]);
 
   // ── CRUD ──
   const addVisit = () => {
@@ -220,7 +243,9 @@ export default function SiteVisitsTab({ project }: { project: Project }) {
       })}
 
       <p style={{ fontSize: 11, color: 'var(--steel)', marginTop: 16, fontStyle: 'italic' }}>
-        Visit logs are saved to this browser per project. (Can be moved to the Supabase backend for multi-device sync.)
+        {synced === 'cloud'
+          ? '☁ Synced to Supabase — visible to your team on any device.'
+          : '💾 Saved to this browser. (Run the project_visits table SQL in Supabase to enable team/multi-device sync.)'}
       </p>
     </div>
   );

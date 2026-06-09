@@ -65,6 +65,25 @@ create trigger projects_set_updated_at
   before update on public.projects
   for each row execute function public.set_updated_at();
 
+-- ----------------------------------------------------------------------------
+-- 4. SITE VISITS  (one row per project, holding the visit array as JSONB)
+-- ----------------------------------------------------------------------------
+create table if not exists public.project_visits (
+  project_id  text not null,
+  user_id     uuid not null references auth.users (id) on delete cascade,
+  data        jsonb not null default '[]'::jsonb,
+  updated_at  timestamptz not null default now(),
+  primary key (project_id, user_id)
+);
+
+alter table public.project_visits enable row level security;
+
+drop policy if exists "Users manage own visits" on public.project_visits;
+create policy "Users manage own visits"
+  on public.project_visits for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
 -- ============================================================================
 --  DONE.
 --
