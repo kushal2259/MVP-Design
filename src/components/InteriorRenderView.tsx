@@ -46,8 +46,21 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
   const [mode, setMode] = useState<'orbit' | 'cinematic'>('orbit');
   const [tod, setTod] = useState(0);          // 0 = bright day … 1 = night
   const [recording, setRecording] = useState(false);
+  const [fpRoom, setFpRoom] = useState<string | null>(null);
   const modeRef = useRef(mode); modeRef.current = mode;
   const todRef = useRef(tod); todRef.current = tod;
+  const controlsRef = useRef<{ target: { set: (x: number, y: number, z: number) => void }; minDistance: number; maxPolarAngle: number; update: () => void } | null>(null);
+  const homeRef = useRef<{ pos: [number, number, number]; target: [number, number, number] } | null>(null);
+
+  const resetView = () => {
+    const cam = cameraRef.current, ctl = controlsRef.current, home = homeRef.current;
+    if (!cam || !ctl || !home) return;
+    cam.position.set(...home.pos);
+    ctl.minDistance = 0; ctl.maxPolarAngle = Math.PI / 2 - 0.05;
+    ctl.target.set(...home.target);
+    ctl.update();
+    setFpRoom(null);
+  };
 
   // ── 🎥 Record the cinematic tour as a downloadable WebM reel ──
   const recordReel = () => {
@@ -122,9 +135,10 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
         camera.lookAt(cx, 0, cz);
         cameraRef.current = camera;
 
-        // Collectors for runtime day/night lighting
+        // Collectors for runtime day/night lighting + room click-to-enter
         const pointLights: import('three').PointLight[] = [];
         const lightDiscs: import('three').Mesh[] = [];
+        const slabMeshes: import('three').Mesh[] = [];
 
         // Renderer
         const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -147,6 +161,8 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
         controls.maxPolarAngle = Math.PI / 2 - 0.05; // stay above the floor
         controls.target.set(cx, FLOOR_HEIGHT * FT * 0.3, cz);
         controls.update();
+        controlsRef.current = controls as unknown as typeof controlsRef.current;
+        homeRef.current = { pos: [cx + span * 0.85, span * 1.05, cz + span * 0.95], target: [cx, FLOOR_HEIGHT * FT * 0.3, cz] };
 
         // ── LIGHTING (bright, even — this is a client-facing showcase) ──
         const ambient = new THREE.AmbientLight('#ffffff', 0.55);
@@ -219,33 +235,42 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
           const slab = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.15, rh), ft);
           slab.position.set(rx + rw / 2, -0.075, rz + rh / 2);
           slab.receiveShadow = true;
+          slab.userData.room = { name: r.name, cx: rx + rw / 2, cz: rz + rh / 2, hw: rw / 2, hd: rh / 2 };
           scene.add(slab);
+          slabMeshes.push(slab);
 
-          // NOTE: No ceiling — this is an open-roof dollhouse view so the camera
-          // can look down into every room. (ceilingMat retained for skirting tone.)
+          // NOTE: No ceiling — open-roof dollhouse view. (ceilingMat retained.)
           void ceilingMat;
 
-          // Skirting boards
-          const skirtH = 0.1, skirtT = 0.03;
-          [
-            [rw, rz + rh / 2, rx + rw / 2, 0, 0],
-            [rw, rz + rh / 2, rx + rw / 2, Math.PI, 0],
-          ].forEach(() => {}); // simplified — just do 4 walls
-
-          // 4 walls (N=front, S=back, E=right, W=left)
-          const walls: [number, number, number, number, number][] = [
-            [rw + wallT * 2, fh, wallT, rx + rw / 2, rz - wallT / 2],         // front
-            [rw + wallT * 2, fh, wallT, rx + rw / 2, rz + rh + wallT / 2],    // back
-            [wallT, fh, rh, rx - wallT / 2, rz + rh / 2],                     // left
-            [wallT, fh, rh, rx + rw + wallT / 2, rz + rh / 2],                // right
-          ];
-          walls.forEach(([ww, wh, wd, wx, wz]) => {
-            const wall = new THREE.Mesh(new THREE.BoxGeometry(ww, wh, wd), wt);
-            wall.position.set(wx, wh / 2, wz);
-            wall.castShadow = true;
-            wall.receiveShadow = true;
-            scene.add(wall);
-          });
+          // ── 4 walls WITH DOOR OPENINGS cut out (so doorways are visible) ──
+          const DOOR_H = 2.1;
+          const buildWall = (side: 'front' | 'back' | 'left' | 'right') => {
+            const isX = side === 'front' || side === 'back';
+            const start = isX ? rx : rz;
+            const len = isX ? rw : rh;
+            const fixed = side === 'front' ? rz - wallT / 2 : side === 'back' ? rz + rh + wallT / 2
+              : side === 'left' ? rx - wallT / 2 : rx + rw + wallT / 2;
+            const ops = r.doors.filter(d => d.side === side)
+              .map(d => ({ s: start + d.offset * FT, e: start + (d.offset + d.width) * FT }))
+              .sort((a, b) => a.s - b.s);
+            const addSeg = (a: number, b: number, y0: number, y1: number) => {
+              if (b - a < 0.02 || y1 - y0 < 0.02) return;
+              const L = b - a, Hh = y1 - y0;
+              const mesh = new THREE.Mesh(new THREE.BoxGeometry(isX ? L : wallT, Hh, isX ? wallT : L), wt);
+              mesh.position.set(isX ? (a + b) / 2 : fixed, y0 + Hh / 2, isX ? fixed : (a + b) / 2);
+              mesh.castShadow = true; mesh.receiveShadow = true;
+              scene.add(mesh);
+            };
+            let cursor = start - wallT;
+            const end = start + len + wallT;
+            for (const op of ops) {
+              addSeg(cursor, op.s, 0, fh);     // wall before the opening
+              addSeg(op.s, op.e, DOOR_H, fh);  // lintel above the doorway
+              cursor = op.e;
+            }
+            addSeg(cursor, end, 0, fh);        // wall after the last opening
+          };
+          (['front', 'back', 'left', 'right'] as const).forEach(buildWall);
 
           // Windows
           r.windows.forEach(win => {
@@ -269,21 +294,27 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
             scene.add(frame);
           });
 
-          // Doors
+          // Doors — an ajar panel hinged at the opening edge (now visible through the gap)
           r.doors.forEach(door => {
-            const dw = door.width * FT;
-            const dH = 2.1;
-            const off = door.offset * FT;
-            let dx = 0, dz = 0, dr = 0, dw2 = 0, dd2 = 0;
-            if (door.side === 'front') { dx = rx + off + dw / 2; dz = rz; dw2 = dw; dd2 = wallT + 0.01; }
-            else if (door.side === 'back') { dx = rx + off + dw / 2; dz = rz + rh; dw2 = dw; dd2 = wallT + 0.01; }
-            else if (door.side === 'left') { dx = rx; dz = rz + off + dw / 2; dw2 = wallT + 0.01; dd2 = dw; }
-            else { dx = rx + rw; dz = rz + off + dw / 2; dw2 = wallT + 0.01; dd2 = dw; }
-
-            // Door panel (slightly open at 20°)
-            const doorPanel = new THREE.Mesh(new THREE.BoxGeometry(dw2, dH, dd2), doorMat);
-            doorPanel.position.set(dx, dH / 2, dz);
-            scene.add(doorPanel);
+            const dw = door.width * FT, dH = 2.1, off = door.offset * FT, open = 0.5;
+            const g = new THREE.Group();
+            const panel = new THREE.Mesh(new THREE.BoxGeometry(dw, dH - 0.05, 0.05), doorMat);
+            panel.position.x = dw / 2;            // hinge at group origin (left edge)
+            panel.castShadow = true;
+            g.add(panel);
+            // handle
+            const handle = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.12), makeMat('#c0c0c0', 0.3, 0.6));
+            handle.position.set(dw - 0.12, 0, 0.08); g.add(handle);
+            if (door.side === 'front' || door.side === 'back') {
+              const z = door.side === 'front' ? rz - wallT / 2 : rz + rh + wallT / 2;
+              g.position.set(rx + off, dH / 2, z);
+              g.rotation.y = door.side === 'front' ? -open : Math.PI + open;
+            } else {
+              const x = door.side === 'left' ? rx - wallT / 2 : rx + rw + wallT / 2;
+              g.position.set(x, dH / 2, rz + off);
+              g.rotation.y = door.side === 'left' ? (Math.PI / 2 + open) : (-Math.PI / 2 - open);
+            }
+            scene.add(g);
           });
 
           // ── FURNITURE ─────────────────────────────────────
@@ -495,6 +526,30 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
         };
         animate();
 
+        // ── Double-click a room → first-person inside it (look around by dragging) ──
+        const raycaster = new THREE.Raycaster();
+        const onEnterRoom = (e: MouseEvent) => {
+          const rect = renderer.domElement.getBoundingClientRect();
+          const mouse = new THREE.Vector2(
+            ((e.clientX - rect.left) / rect.width) * 2 - 1,
+            -((e.clientY - rect.top) / rect.height) * 2 + 1,
+          );
+          raycaster.setFromCamera(mouse, camera);
+          const hits = raycaster.intersectObjects(slabMeshes, false);
+          if (!hits.length) return;
+          const rm = hits[0].object.userData.room as { name: string; cx: number; cz: number; hw: number; hd: number };
+          // stop cinematic, drop the camera to eye-level inside the room
+          modeRef.current = 'orbit'; setMode('orbit');
+          controls.minDistance = 0.2;
+          controls.maxDistance = span * 4;
+          controls.maxPolarAngle = Math.PI * 0.85;
+          camera.position.set(rm.cx - rm.hw * 0.55, 1.6, rm.cz - rm.hd * 0.55);
+          controls.target.set(rm.cx, 1.45, rm.cz);
+          controls.update();
+          setFpRoom(rm.name);
+        };
+        renderer.domElement.addEventListener('dblclick', onEnterRoom);
+
         // Resize handler
         const onResize = () => {
           if (!canvasRef.current) return;
@@ -508,6 +563,7 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
 
         return () => {
           window.removeEventListener('resize', onResize);
+          renderer.domElement.removeEventListener('dblclick', onEnterRoom);
           cancelAnimationFrame(animId);
           composer?.dispose?.();
           renderer.dispose();
@@ -603,9 +659,11 @@ export default function InteriorRenderView({ rooms, settings, floor = 0 }: Props
             border: '1px solid rgba(255,255,255,0.08)',
           }}>
             <div style={{ color: '#f8c060', fontWeight: 700, marginBottom: 4, letterSpacing: '0.08em' }}>
-              INTERIOR 3D — CLIENT PREVIEW
+              {fpRoom ? `🚶 INSIDE: ${fpRoom.toUpperCase()}` : 'INTERIOR 3D — CLIENT PREVIEW'}
             </div>
-            Left drag: orbit · Scroll: zoom · Right drag: pan
+            {fpRoom
+              ? <span>Drag to look around · <span style={{ color: '#7dd3fc', cursor: 'pointer', pointerEvents: 'auto' }} onClick={resetView}>↺ Back to dollhouse</span></span>
+              : 'Double-click a room to walk inside · Cinematic for the tour'}
           </div>
           <div style={{
             backgroundColor: 'rgba(10,10,20,0.8)', color: '#94a3b8',
