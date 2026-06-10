@@ -18,6 +18,19 @@ import type { DoorConfig, WindowConfig, FurnitureConfig } from '@/types';
 import { strongNeighbors } from './adjacency';
 import { adjacencyOrder, rngFrom } from './planningEngine';
 
+// NBC 2016 minimum clear widths (shorter side) enforced post-slice, in feet.
+const NBC_MIN_WIDTH_GEO: Partial<Record<string, number>> = {
+  bedroom:   10,
+  living:    10,
+  kitchen:   7.5,
+  toilet:    4.5,
+  staircase: 3.5,
+  corridor:  3.0,
+  lobby:     4.0,
+  dining:    7.5,
+  balcony:   3.0,
+};
+
 interface Rect { x: number; y: number; w: number; h: number; }
 
 // ── Recursive area-proportional slicing ──────────────────────────────────────
@@ -213,11 +226,16 @@ export function buildGeometry(
   const usableW = program.buildable.width - setbacks.left - setbacks.right;
   const usableD = program.buildable.depth - setbacks.front - setbacks.rear;
 
-  // Front yard (outdoor) at the bottom; building occupies the top of the plot.
+  // Layout (all coords relative to plot origin, 0,0 = front-left corner):
+  //   0..setbacks.front          → front setback (road side)
+  //   setbacks.front..yardEnd    → front yard (parking + garden strip)
+  //   yardEnd..plotDepth-setbacks.rear → building footprint
+  //   plotDepth-setbacks.rear..plotDepth → rear setback
+  // Convention: y increases toward the rear of the plot.
   const hasYardItems = program.rooms.some(r => r.floor === 0 && r.zone === 'outdoor');
-  const yardDepth = hasYardItems ? Math.min(usableD * 0.28, 22) : 0;
-  const buildRect: Rect = { x: setbacks.left, y: setbacks.rear, w: usableW, h: usableD - yardDepth };
-  const yardRect: Rect = { x: setbacks.left, y: setbacks.rear + buildRect.h, w: usableW, h: yardDepth };
+  const yardDepth = hasYardItems ? Math.max(0, Math.min(usableD * 0.28, 22)) : 0;
+  const yardRect:  Rect = { x: setbacks.left, y: setbacks.front, w: usableW, h: yardDepth };
+  const buildRect: Rect = { x: setbacks.left, y: setbacks.front + yardDepth, w: usableW, h: usableD - yardDepth };
 
   const layouts: RoomLayout[] = [];
 

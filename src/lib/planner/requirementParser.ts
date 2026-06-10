@@ -45,9 +45,13 @@ export function parseRequirementsLocal(text: string): ParsedRequirements {
   const bhk = t.match(/(\d)\s*(bhk|bedroom|bed)/);
   const bedrooms = bhk ? Math.max(1, Math.min(8, +bhk[1])) : 3;
 
-  const floorMatch = t.match(/(\d)\s*(floor|storey|story)/) || (/(g\s*\+\s*(\d))/.exec(t));
+  // "2 floors" / "2 floor" / "G+2" / "3 storey"
+  // floorMatch[1] = the digit before "floor/storey"; gPlusMatch[1] = digit after "G+"
+  const floorDigitMatch = t.match(/(\d+)\s*(?:floor|storey|story)/);
+  const gPlusMatch      = t.match(/g\s*\+\s*(\d+)/);
   let floors = 2;
-  if (floorMatch) floors = floorMatch[2] ? Math.min(4, +floorMatch[2] + (/(g\s*\+)/.test(t) ? 1 : 0)) : Math.min(4, +floorMatch[1]);
+  if (gPlusMatch)        floors = Math.min(4, +gPlusMatch[1] + 1);   // G+2 = 3 floors total
+  else if (floorDigitMatch) floors = Math.max(1, Math.min(4, +floorDigitMatch[1]));
   if (/single\s*(floor|storey)|ground\s*floor only|bungalow/.test(t)) floors = 1;
 
   const style: ParsedRequirements['style'] =
