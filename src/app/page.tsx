@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { signIn, signUp, sendPasswordReset, getCurrentUser } from '@/lib/store';
+import { signIn, signUp, verifyEmailOtp, sendPasswordReset, getCurrentUser } from '@/lib/store';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/lib/useIsMobile';
 
@@ -52,6 +52,9 @@ function HomePageInner() {
   const [suPass, setSuPass] = useState('');
   const [suPass2, setSuPass2] = useState('');
   const [suError, setSuError] = useState('');
+  const [suOtpMode, setSuOtpMode] = useState(false);
+  const [suOtp, setSuOtp] = useState('');
+  const [suPassStrength, setSuPassStrength] = useState<string[]>([]);
 
   // Forgot password form
   const [fpEmail, setFpEmail] = useState('');
@@ -109,20 +112,37 @@ function HomePageInner() {
     router.push('/dashboard');
   };
 
+  const validatePassword = (p: string): string[] => {
+    const issues: string[] = [];
+    if (p.length < 8)            issues.push('At least 8 characters');
+    if (!/[A-Z]/.test(p))        issues.push('One uppercase letter');
+    if (!/[a-z]/.test(p))        issues.push('One lowercase letter');
+    if (!/[0-9]/.test(p))        issues.push('One number');
+    if (!/[^A-Za-z0-9]/.test(p)) issues.push('One special character (!@#$%^&*)');
+    return issues;
+  };
+
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
+    const issues = validatePassword(suPass);
+    if (issues.length > 0) { setSuError('Password must contain: ' + issues.join(', ')); return; }
     if (suPass !== suPass2) { setSuError('Passwords do not match'); return; }
-    if (suPass.length < 6) { setSuError('Password must be at least 6 characters'); return; }
     setBusy(true);
     const res = await signUp(suName, suEmail, suPass);
     setBusy(false);
     if (!res.ok) { setSuError(res.error || 'Error'); return; }
-    if (res.needsConfirmation) {
-      setSuError('');
-      setModal('signin');
-      setSiError('✓ Account created! Please check your email to confirm, then sign in.');
-      return;
-    }
+    // Show OTP entry screen for email verification
+    setSuError('');
+    setSuOtpMode(true);
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (suOtp.length < 6) { setSuError('Enter the 6-digit code from your email'); return; }
+    setBusy(true);
+    const res = await verifyEmailOtp(suEmail, suOtp);
+    setBusy(false);
+    if (!res.ok) { setSuError(res.error || 'Invalid code — check your email and try again'); return; }
     const u = await getCurrentUser();
     setUser(u);
     setModal(null);
@@ -200,7 +220,7 @@ function HomePageInner() {
             )}
 
             {/* ── Sign Up ── */}
-            {modal === 'signup' && (
+            {modal === 'signup' && !suOtpMode && (
               <>
                 <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 400, marginBottom: 6 }}>Create account</h2>
                 <p style={{ color: 'var(--steel)', fontSize: 13, marginBottom: 28 }}>Start designing in minutes — no credit card needed</p>
@@ -215,7 +235,21 @@ function HomePageInner() {
                   </div>
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Password</label>
-                    <input type="password" required style={inputStyle} value={suPass} onChange={e => setSuPass(e.target.value)} placeholder="At least 6 characters" />
+                    <input type="password" required style={inputStyle} value={suPass}
+                      onChange={e => { setSuPass(e.target.value); setSuPassStrength(validatePassword(e.target.value)); }}
+                      placeholder="Min 8 chars, upper, lower, number, special" />
+                    {suPass.length > 0 && (
+                      <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {(['8+ chars', 'Uppercase', 'Lowercase', 'Number', 'Special char'] as const).map((label, i) => {
+                          const checks = [suPass.length >= 8, /[A-Z]/.test(suPass), /[a-z]/.test(suPass), /[0-9]/.test(suPass), /[^A-Za-z0-9]/.test(suPass)];
+                          return (
+                            <span key={label} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 99, backgroundColor: checks[i] ? '#dcfce7' : '#fee2e2', color: checks[i] ? '#16a34a' : '#dc2626' }}>
+                              {checks[i] ? '✓' : '✗'} {label}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Confirm Password</label>
@@ -229,6 +263,38 @@ function HomePageInner() {
                 <p style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--steel)' }}>
                   Already have an account?{' '}
                   <button onClick={() => openModal('signin')} style={{ background: 'none', border: 'none', color: 'var(--blueprint)', cursor: 'pointer', fontSize: 13, fontWeight: 500, padding: 0 }}>Sign in</button>
+                </p>
+              </>
+            )}
+
+            {/* ── OTP Verification ── */}
+            {modal === 'signup' && suOtpMode && (
+              <>
+                <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 400, marginBottom: 6 }}>Verify your email</h2>
+                <p style={{ color: 'var(--steel)', fontSize: 13, marginBottom: 28 }}>
+                  We sent a 6-digit verification code to <strong>{suEmail}</strong>. Enter it below to activate your account.
+                </p>
+                <form onSubmit={handleVerifyOtp} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--steel)', display: 'block', marginBottom: 5 }}>Verification Code</label>
+                    <input
+                      type="text" inputMode="numeric" pattern="[0-9]*" maxLength={6} required
+                      style={{ ...inputStyle, fontSize: 24, letterSpacing: '0.3em', textAlign: 'center' }}
+                      value={suOtp} onChange={e => setSuOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="000000" autoFocus
+                    />
+                  </div>
+                  {suError && <p style={{ color: '#dc2626', fontSize: 12, margin: 0 }}>{suError}</p>}
+                  <button type="submit" disabled={busy || suOtp.length < 6} style={{ padding: '11px', borderRadius: 6, backgroundColor: 'var(--blueprint)', color: 'white', border: 'none', fontSize: 14, fontWeight: 500, cursor: 'pointer', marginTop: 4, opacity: (busy || suOtp.length < 6) ? 0.6 : 1 }}>
+                    {busy ? 'Verifying…' : 'Verify & Continue →'}
+                  </button>
+                </form>
+                <p style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: 'var(--steel)' }}>
+                  Didn&apos;t receive the code?{' '}
+                  <button onClick={() => { setSuOtpMode(false); setSuOtp(''); setSuError(''); }}
+                    style={{ background: 'none', border: 'none', color: 'var(--blueprint)', cursor: 'pointer', fontSize: 12, padding: 0 }}>
+                    Go back
+                  </button>
                 </p>
               </>
             )}

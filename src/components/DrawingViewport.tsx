@@ -23,6 +23,7 @@ interface DrawingViewportProps {
   onSelectRoom: (id: string | null) => void;
   onUpdateRoom: (updatedRoom: RoomLayout) => void;
   activeTab: 'ground' | 'first' | 'terrace' | 'site' | 'roof' | 'elevations' | 'sections' | 'structural' | 'electrical' | 'plumbing' | 'hvac' | 'fire' | 'schedules' | 'column-plan' | 'beam-plan' | 'foundation-plan';
+  floorOverride?: number; // when set, overrides activeTab floor derivation
   elevationSide: 'front' | 'rear' | 'left' | 'right';
   sectionType: 'cross' | 'longitudinal';
   siteSvg: string;
@@ -39,6 +40,7 @@ export default function DrawingViewport({
   onSelectRoom,
   onUpdateRoom,
   activeTab,
+  floorOverride,
   elevationSide,
   sectionType,
   siteSvg,
@@ -51,7 +53,18 @@ export default function DrawingViewport({
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [resizingHandle, setResizingHandle] = useState<'w' | 'h' | null>(null);
+  type DragMode = 'move' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw' | null;
+  const [dragMode, setDragMode] = useState<DragMode>(null);
+  const [draggingRoomId, setDraggingRoomId] = useState<string | null>(null);
+  const [dragStartMouse, setDragStartMouse] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [dragStartRoom, setDragStartRoom] = useState<{ x: number; y: number; w: number; h: number }>({ x: 0, y: 0, w: 0, h: 0 });
+  const dragMovedRef = useRef(false);
+  const [stairDirs, setStairDirs] = useState<Record<string, 'n' | 's' | 'e' | 'w'>>({});
+  const [draggingFurniture, setDraggingFurniture] = useState<{
+    roomId: string; furnitureId: string;
+    origFx: number; origFy: number;
+    startMouseXFt: number; startMouseYFt: number;
+  } | null>(null);
   const [draggingFitting, setDraggingFitting] = useState<{
     roomId: string;
     type: 'door' | 'window';
@@ -157,7 +170,9 @@ export default function DrawingViewport({
   }, [activeTab]);
 
   let activeFloor = -1;
-  if (activeTab === 'ground') activeFloor = 0;
+  if (floorOverride !== undefined) {
+    activeFloor = floorOverride;
+  } else if (activeTab === 'ground') activeFloor = 0;
   else if (activeTab === 'first') activeFloor = 1;
   else if (activeTab === 'terrace') activeFloor = 2;
   else if (['structural', 'column-plan', 'beam-plan', 'foundation-plan', 'electrical', 'plumbing', 'hvac', 'fire', 'schedules'].includes(activeTab)) {
@@ -182,8 +197,30 @@ export default function DrawingViewport({
   };
 
   // Handle panning start
+  const startRoomDrag = (e: React.MouseEvent, room: RoomLayout, mode: DragMode) => {
+    e.stopPropagation();
+    if (!viewportRef.current) return;
+    const rect = viewportRef.current.getBoundingClientRect();
+    const mouseXInFt = (e.clientX - rect.left - pan.x) / (scale * zoom);
+    const mouseYInFt = (e.clientY - rect.top - pan.y) / (scale * zoom);
+    setDragMode(mode);
+    setDraggingRoomId(room.id);
+    setDragStartMouse({ x: mouseXInFt, y: mouseYInFt });
+    setDragStartRoom({ x: room.x, y: room.y, w: room.w, h: room.h });
+    dragMovedRef.current = false;
+  };
+
+  const handleRotateRoom = (e: React.MouseEvent, room: RoomLayout) => {
+    e.stopPropagation();
+    const cx = room.x + room.w / 2;
+    const cy = room.y + room.h / 2;
+    const newW = room.h;
+    const newH = room.w;
+    onUpdateRoom({ ...room, x: parseFloat((cx - newW / 2).toFixed(1)), y: parseFloat((cy - newH / 2).toFixed(1)), w: newW, h: newH });
+  };
+
   const handleMouseDown = (e: MouseEvent<HTMLDivElement>) => {
-    if (resizingHandle) return;
+    if (dragMode) return;
     if (e.button === 0) {
       setIsPanning(true);
       setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
@@ -197,22 +234,53 @@ export default function DrawingViewport({
         x: e.clientX - dragStart.x,
         y: e.clientY - dragStart.y
       });
-    } else if (resizingHandle && selectedRoomId) {
-      const room = rooms.find(r => r.id === selectedRoomId);
-      if (!room) return;
-
-      if (!viewportRef.current) return;
+    } else if (dragMode && draggingRoomId) {
+      const room = rooms.find(r => r.id === draggingRoomId);
+      if (!room || !viewportRef.current) return;
       const rect = viewportRef.current.getBoundingClientRect();
       const mouseXInFt = (e.clientX - rect.left - pan.x) / (scale * zoom);
       const mouseYInFt = (e.clientY - rect.top - pan.y) / (scale * zoom);
-
+      const dx = mouseXInFt - dragStartMouse.x;
+      const dy = mouseYInFt - dragStartMouse.y;
+      dragMovedRef.current = true;
+      const orig = dragStartRoom;
       const updated = { ...room };
-      if (resizingHandle === 'w') {
-        updated.w = Math.max(5, Math.round(mouseXInFt - room.x));
-      } else if (resizingHandle === 'h') {
-        updated.h = Math.max(4, Math.round(mouseYInFt - room.y));
+
+      if (dragMode === 'move') {
+        updated.x = Math.max(0, parseFloat((orig.x + dx).toFixed(1)));
+        updated.y = Math.max(0, parseFloat((orig.y + dy).toFixed(1)));
+      } else {
+        if (dragMode === 'n' || dragMode === 'nw' || dragMode === 'ne') {
+          const newH = Math.max(5, orig.h - dy);
+          updated.y = parseFloat((orig.y + orig.h - newH).toFixed(1));
+          updated.h = Math.round(newH);
+        }
+        if (dragMode === 's' || dragMode === 'sw' || dragMode === 'se') {
+          updated.h = Math.max(5, Math.round(orig.h + dy));
+        }
+        if (dragMode === 'e' || dragMode === 'ne' || dragMode === 'se') {
+          updated.w = Math.max(5, Math.round(orig.w + dx));
+        }
+        if (dragMode === 'w' || dragMode === 'nw' || dragMode === 'sw') {
+          const newW = Math.max(5, orig.w - dx);
+          updated.x = parseFloat((orig.x + orig.w - newW).toFixed(1));
+          updated.w = Math.round(newW);
+        }
       }
       onUpdateRoom(updated);
+    } else if (draggingFurniture) {
+      const room = rooms.find(r => r.id === draggingFurniture.roomId);
+      if (!room || !viewportRef.current) return;
+      const rect = viewportRef.current.getBoundingClientRect();
+      const mouseXInFt = (e.clientX - rect.left - pan.x) / (scale * zoom);
+      const mouseYInFt = (e.clientY - rect.top - pan.y) / (scale * zoom);
+      const dx = mouseXInFt - draggingFurniture.startMouseXFt;
+      const dy = mouseYInFt - draggingFurniture.startMouseYFt;
+      const fur = room.furniture.find(f => f.id === draggingFurniture.furnitureId);
+      if (!fur) return;
+      const newFx = parseFloat(Math.max(0, Math.min(room.w - fur.w, draggingFurniture.origFx + dx)).toFixed(1));
+      const newFy = parseFloat(Math.max(0, Math.min(room.h - fur.h, draggingFurniture.origFy + dy)).toFixed(1));
+      onUpdateRoom({ ...room, furniture: room.furniture.map(f => f.id === draggingFurniture.furnitureId ? { ...f, x: newFx, y: newFy } : f) });
     } else if (draggingFitting) {
       if (!viewportRef.current) return;
       const rect = viewportRef.current.getBoundingClientRect();
@@ -246,7 +314,9 @@ export default function DrawingViewport({
 
   const handleMouseUp = () => {
     setIsPanning(false);
-    setResizingHandle(null);
+    setDragMode(null);
+    setDraggingRoomId(null);
+    setDraggingFurniture(null);
     setDraggingFitting(null);
   };
 
@@ -381,7 +451,24 @@ export default function DrawingViewport({
     const strokeStyle = "#94a3b8";
 
     return (
-      <g key={f.id} transform={`rotate(${f.rotation}, ${fx}, ${fy})`} stroke={strokeStyle} strokeWidth="1" fill={fillStyle}>
+      <g key={f.id} transform={`rotate(${f.rotation}, ${fx}, ${fy})`} stroke={strokeStyle} strokeWidth="1" fill={fillStyle}
+        style={{ cursor: 'grab' }}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          if (!viewportRef.current) return;
+          const rect = viewportRef.current.getBoundingClientRect();
+          const mouseXInFt = (e.clientX - rect.left - pan.x) / (scale * zoom);
+          const mouseYInFt = (e.clientY - rect.top - pan.y) / (scale * zoom);
+          setDraggingFurniture({ roomId: r.id, furnitureId: f.id, origFx: f.x, origFy: f.y, startMouseXFt: mouseXInFt, startMouseYFt: mouseYInFt });
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          // Double-click rotates furniture 90°
+          const newW = f.h; const newH = f.w;
+          const newRot = (f.rotation + 90) % 360;
+          onUpdateRoom({ ...r, furniture: r.furniture.map(fi => fi.id === f.id ? { ...fi, w: newW, h: newH, rotation: newRot } : fi) });
+        }}
+      >
         {f.type.startsWith('bed') ? (
           // Beds (King, Queen, Double, Single)
           <g stroke="#94a3b8" fill="none" strokeWidth="1">
@@ -888,43 +975,95 @@ export default function DrawingViewport({
                     width={rw}
                     height={rh}
                     className={isSelected ? 'selected-room' : 'wall'}
+                    style={{ cursor: isSelected ? 'move' : 'pointer' }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onSelectRoom(isSelected ? null : r.id);
+                      if (!dragMovedRef.current) onSelectRoom(isSelected ? null : r.id);
+                    }}
+                    onMouseDown={(e) => {
+                      dragMovedRef.current = false;
+                      if (isSelected) startRoomDrag(e, r, 'move');
                     }}
                   />
 
                   {/* 1. Staircase Texture */}
-                  {r.type === 'staircase' && (
-                    <g stroke="rgba(255, 255, 255, 0.15)" strokeWidth="1" fill="none">
-                      {/* Landing area (assume North end of stairwell) */}
-                      <rect x={rx} y={ry} width={rw} height={3 * scale} fill="rgba(255, 255, 255, 0.02)" />
-                      <line x1={rx} y1={ry + 3 * scale} x2={rx + rw} y2={ry + 3 * scale} strokeWidth="1.5" />
-                      {/* Handrail central line */}
-                      <line x1={rx + rw / 2} y1={ry + 3 * scale} x2={rx + rw / 2} y2={ry + rh} strokeWidth="1.5" />
-                      {/* Left flight treads (parallel lines) */}
-                      {Array.from({ length: Math.floor((rh - 3 * scale) / (0.9 * scale)) }).map((_, i) => {
-                        const lineY = ry + 3 * scale + (i + 1) * 0.9 * scale;
-                        return <line key={`stair-l-${i}`} x1={rx} y1={lineY} x2={rx + rw / 2} y2={lineY} />;
-                      })}
-                      {/* Right flight treads */}
-                      {Array.from({ length: Math.floor((rh - 3 * scale) / (0.9 * scale)) }).map((_, i) => {
-                        const lineY = ry + 3 * scale + (i + 1) * 0.9 * scale;
-                        return <line key={`stair-r-${i}`} x1={rx + rw / 2} y1={lineY} x2={rx + rw} y2={lineY} />;
-                      })}
-                      {/* Direction indicator arrow */}
-                      <path
-                        d={`M ${rx + rw * 0.25} ${ry + rh - 15} L ${rx + rw * 0.25} ${ry + 4 * scale} A ${rw * 0.25} ${rw * 0.25} 0 0 1 ${rx + rw * 0.75} ${ry + 4 * scale} L ${rx + rw * 0.75} ${ry + rh - 25}`}
-                        stroke="#10b981"
-                        strokeWidth="1.2"
-                        strokeLinecap="round"
-                        strokeDasharray="2 2"
-                      />
-                      {/* Arrow head */}
-                      <path d={`M ${rx + rw * 0.75 - 3} ${ry + rh - 22} L ${rx + rw * 0.75} ${ry + rh - 27} L ${rx + rw * 0.75 + 3} ${ry + rh - 22}`} fill="#10b981" stroke="none" />
-                      <text x={rx + rw * 0.25} y={ry + rh - 5} fill="#10b981" fontSize="7px" fontFamily="monospace" textAnchor="middle">UP</text>
-                    </g>
-                  )}
+                  {r.type === 'staircase' && (() => {
+                    const dir = stairDirs[r.id] || 'n';
+                    const portrait = dir === 'n' || dir === 's';
+                    const treadCount = portrait
+                      ? Math.floor((rh - 3 * scale) / (0.9 * scale))
+                      : Math.floor((rw - 3 * scale) / (0.9 * scale));
+                    const landingSize = 3 * scale;
+                    return (
+                      <g stroke="rgba(255, 255, 255, 0.15)" strokeWidth="1" fill="none">
+                        {/* Landing */}
+                        {dir === 'n' && <rect x={rx} y={ry} width={rw} height={landingSize} fill="rgba(255,255,255,0.02)" />}
+                        {dir === 's' && <rect x={rx} y={ry + rh - landingSize} width={rw} height={landingSize} fill="rgba(255,255,255,0.02)" />}
+                        {dir === 'e' && <rect x={rx + rw - landingSize} y={ry} width={landingSize} height={rh} fill="rgba(255,255,255,0.02)" />}
+                        {dir === 'w' && <rect x={rx} y={ry} width={landingSize} height={rh} fill="rgba(255,255,255,0.02)" />}
+                        {/* Landing divider line */}
+                        {dir === 'n' && <line x1={rx} y1={ry + landingSize} x2={rx + rw} y2={ry + landingSize} strokeWidth="1.5" />}
+                        {dir === 's' && <line x1={rx} y1={ry + rh - landingSize} x2={rx + rw} y2={ry + rh - landingSize} strokeWidth="1.5" />}
+                        {dir === 'e' && <line x1={rx + rw - landingSize} y1={ry} x2={rx + rw - landingSize} y2={ry + rh} strokeWidth="1.5" />}
+                        {dir === 'w' && <line x1={rx + landingSize} y1={ry} x2={rx + landingSize} y2={ry + rh} strokeWidth="1.5" />}
+                        {/* Handrail */}
+                        {portrait && <line x1={rx + rw / 2} y1={dir === 'n' ? ry + landingSize : ry} x2={rx + rw / 2} y2={dir === 'n' ? ry + rh : ry + rh - landingSize} strokeWidth="1.5" />}
+                        {!portrait && <line x1={dir === 'e' ? rx : rx + landingSize} y1={ry + rh / 2} x2={dir === 'e' ? rx + rw - landingSize : rx + rw} y2={ry + rh / 2} strokeWidth="1.5" />}
+                        {/* Treads */}
+                        {portrait && Array.from({ length: treadCount }).map((_, i) => {
+                          const lineY = dir === 'n'
+                            ? ry + landingSize + (i + 1) * 0.9 * scale
+                            : ry + (i + 1) * 0.9 * scale;
+                          return (
+                            <g key={`tread-${i}`}>
+                              <line x1={rx} y1={lineY} x2={rx + rw / 2} y2={lineY} />
+                              <line x1={rx + rw / 2} y1={lineY} x2={rx + rw} y2={lineY} />
+                            </g>
+                          );
+                        })}
+                        {!portrait && Array.from({ length: treadCount }).map((_, i) => {
+                          const lineX = dir === 'w'
+                            ? rx + landingSize + (i + 1) * 0.9 * scale
+                            : rx + (i + 1) * 0.9 * scale;
+                          return (
+                            <g key={`tread-${i}`}>
+                              <line x1={lineX} y1={ry} x2={lineX} y2={ry + rh / 2} />
+                              <line x1={lineX} y1={ry + rh / 2} x2={lineX} y2={ry + rh} />
+                            </g>
+                          );
+                        })}
+                        {/* UP arrow */}
+                        {dir === 'n' && (
+                          <g>
+                            <path d={`M ${rx + rw * 0.25} ${ry + rh - 15} L ${rx + rw * 0.25} ${ry + 4 * scale} A ${rw * 0.25} ${rw * 0.25} 0 0 1 ${rx + rw * 0.75} ${ry + 4 * scale} L ${rx + rw * 0.75} ${ry + rh - 25}`} stroke="#10b981" strokeWidth="1.2" strokeLinecap="round" strokeDasharray="2 2" fill="none" />
+                            <path d={`M ${rx + rw * 0.75 - 3} ${ry + rh - 22} L ${rx + rw * 0.75} ${ry + rh - 27} L ${rx + rw * 0.75 + 3} ${ry + rh - 22}`} fill="#10b981" stroke="none" />
+                            <text x={rx + rw * 0.25} y={ry + rh - 5} fill="#10b981" fontSize="7px" fontFamily="monospace" textAnchor="middle">UP</text>
+                          </g>
+                        )}
+                        {dir === 's' && (
+                          <g>
+                            <path d={`M ${rx + rw * 0.25} ${ry + 15} L ${rx + rw * 0.25} ${ry + rh - 4 * scale} A ${rw * 0.25} ${rw * 0.25} 0 0 0 ${rx + rw * 0.75} ${ry + rh - 4 * scale} L ${rx + rw * 0.75} ${ry + 25}`} stroke="#10b981" strokeWidth="1.2" strokeLinecap="round" strokeDasharray="2 2" fill="none" />
+                            <path d={`M ${rx + rw * 0.75 - 3} ${ry + 22} L ${rx + rw * 0.75} ${ry + 27} L ${rx + rw * 0.75 + 3} ${ry + 22}`} fill="#10b981" stroke="none" />
+                            <text x={rx + rw * 0.25} y={ry + 12} fill="#10b981" fontSize="7px" fontFamily="monospace" textAnchor="middle">UP</text>
+                          </g>
+                        )}
+                        {dir === 'e' && (
+                          <g>
+                            <path d={`M ${rx + 15} ${ry + rh * 0.25} L ${rx + rw - 4 * scale} ${ry + rh * 0.25} A ${rh * 0.25} ${rh * 0.25} 0 0 1 ${rx + rw - 4 * scale} ${ry + rh * 0.75} L ${rx + 25} ${ry + rh * 0.75}`} stroke="#10b981" strokeWidth="1.2" strokeLinecap="round" strokeDasharray="2 2" fill="none" />
+                            <path d={`M ${rx + 22} ${ry + rh * 0.75 - 3} L ${rx + 27} ${ry + rh * 0.75} L ${rx + 22} ${ry + rh * 0.75 + 3}`} fill="#10b981" stroke="none" />
+                            <text x={rx + 12} y={ry + rh * 0.25 - 4} fill="#10b981" fontSize="7px" fontFamily="monospace" textAnchor="middle">UP</text>
+                          </g>
+                        )}
+                        {dir === 'w' && (
+                          <g>
+                            <path d={`M ${rx + rw - 15} ${ry + rh * 0.25} L ${rx + 4 * scale} ${ry + rh * 0.25} A ${rh * 0.25} ${rh * 0.25} 0 0 0 ${rx + 4 * scale} ${ry + rh * 0.75} L ${rx + rw - 25} ${ry + rh * 0.75}`} stroke="#10b981" strokeWidth="1.2" strokeLinecap="round" strokeDasharray="2 2" fill="none" />
+                            <path d={`M ${rx + rw - 22} ${ry + rh * 0.75 - 3} L ${rx + rw - 27} ${ry + rh * 0.75} L ${rx + rw - 22} ${ry + rh * 0.75 + 3}`} fill="#10b981" stroke="none" />
+                            <text x={rx + rw - 12} y={ry + rh * 0.25 - 4} fill="#10b981" fontSize="7px" fontFamily="monospace" textAnchor="middle">UP</text>
+                          </g>
+                        )}
+                      </g>
+                    );
+                  })()}
 
                   {/* 2. Balcony Texture */}
                   {r.type === 'balcony' && (
@@ -984,34 +1123,53 @@ export default function DrawingViewport({
                     </g>
                   )}
 
-                  {isSelected && (
-                    <g>
-                      <rect
-                        x={rx + rw - 4}
-                        y={ry + rh / 2 - 12}
-                        width={8}
-                        height={24}
-                        fill="#10b981"
-                        className="cursor-ew-resize"
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                          setResizingHandle('w');
-                        }}
-                      />
-                      <rect
-                        x={rx + rw / 2 - 12}
-                        y={ry + rh - 4}
-                        width={24}
-                        height={8}
-                        fill="#10b981"
-                        className="cursor-ns-resize"
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                          setResizingHandle('h');
-                        }}
-                      />
-                    </g>
-                  )}
+                  {isSelected && (() => {
+                    const H = 8; // handle size px
+                    const H2 = H / 2;
+                    const handles: Array<{ mode: DragMode; cx: number; cy: number; cursor: string }> = [
+                      { mode: 'nw', cx: rx,          cy: ry,          cursor: 'nwse-resize' },
+                      { mode: 'n',  cx: rx + rw / 2, cy: ry,          cursor: 'ns-resize'   },
+                      { mode: 'ne', cx: rx + rw,     cy: ry,          cursor: 'nesw-resize' },
+                      { mode: 'e',  cx: rx + rw,     cy: ry + rh / 2, cursor: 'ew-resize'   },
+                      { mode: 'se', cx: rx + rw,     cy: ry + rh,     cursor: 'nwse-resize' },
+                      { mode: 's',  cx: rx + rw / 2, cy: ry + rh,     cursor: 'ns-resize'   },
+                      { mode: 'sw', cx: rx,          cy: ry + rh,     cursor: 'nesw-resize' },
+                      { mode: 'w',  cx: rx,          cy: ry + rh / 2, cursor: 'ew-resize'   },
+                    ];
+                    const rotCx = rx + rw / 2;
+                    const rotCy = ry - 18;
+                    return (
+                      <g>
+                        {handles.map(h => (
+                          <rect
+                            key={h.mode}
+                            x={h.cx - H2}
+                            y={h.cy - H2}
+                            width={H}
+                            height={H}
+                            fill="#10b981"
+                            stroke="#064e3b"
+                            strokeWidth="1"
+                            style={{ cursor: h.cursor }}
+                            onMouseDown={(e) => startRoomDrag(e, r, h.mode)}
+                          />
+                        ))}
+                        {/* Rotate handle — circular button above the room */}
+                        <line x1={rotCx} y1={ry - 8} x2={rotCx} y2={rotCy + 6} stroke="#10b981" strokeWidth="1" strokeDasharray="2 2" />
+                        <circle
+                          cx={rotCx} cy={rotCy} r={7}
+                          fill="#0f172a" stroke="#10b981" strokeWidth="1.5"
+                          style={{ cursor: 'grab' }}
+                          onClick={(e) => handleRotateRoom(e, r)}
+                        />
+                        <text
+                          x={rotCx} y={rotCy + 4}
+                          textAnchor="middle" fontSize="10" fill="#10b981"
+                          style={{ pointerEvents: 'none', userSelect: 'none' }}
+                        >↻</text>
+                      </g>
+                    );
+                  })()}
                 </g>
               );
             })}
@@ -1155,7 +1313,7 @@ export default function DrawingViewport({
       {selectedRoom && activeFloor !== -1 && (
         <div
           className="absolute top-14 right-3 z-20 glass-panel rounded-xl shadow-2xl overflow-hidden"
-          style={{ width: 300, maxHeight: 'calc(100% - 110px)', overflowY: 'auto', border: '2px solid #10b981', boxShadow: '0 0 0 4px rgba(16,185,129,0.12), 0 24px 60px rgba(0,0,0,0.5)' }}
+          style={{ width: 380, maxHeight: 'calc(100% - 110px)', overflowY: 'auto', border: '2px solid #10b981', boxShadow: '0 0 0 4px rgba(16,185,129,0.12), 0 24px 60px rgba(0,0,0,0.5)' }}
           onMouseDown={e => e.stopPropagation()}
         >
           {/* Header */}
@@ -1166,21 +1324,129 @@ export default function DrawingViewport({
               </span>
               <span className="text-[11px] text-emerald-600 font-mono">Room Properties</span>
             </div>
-            <button
-              className="w-7 h-7 flex items-center justify-center rounded-full bg-slate-800 hover:bg-red-900 text-slate-400 hover:text-red-300 text-sm transition"
-              onClick={() => onSelectRoom(null)}
-              title="Close panel"
-            >✕</button>
+            <div className="flex items-center gap-2">
+              <button
+                className="px-2 py-1 rounded bg-emerald-800/60 hover:bg-emerald-700/80 text-emerald-300 text-xs font-mono border border-emerald-600/40 transition"
+                onClick={(e) => handleRotateRoom(e, selectedRoom)}
+                title="Rotate 90°"
+              >↻ Rotate</button>
+              <button
+                className="w-7 h-7 flex items-center justify-center rounded-full bg-slate-800 hover:bg-red-900 text-slate-400 hover:text-red-300 text-sm transition"
+                onClick={() => onSelectRoom(null)}
+                title="Close panel"
+              >✕</button>
+            </div>
           </div>
 
-          {/* Room size info */}
-          <div className="px-4 py-2.5 text-xs text-slate-300 font-mono border-b border-slate-800 bg-slate-900/40 flex gap-3">
-            <span className="text-emerald-400 font-bold">{selectedRoom.w}′ × {selectedRoom.h}′</span>
-            <span>·</span>
-            <span>{selectedRoom.w * selectedRoom.h} sq ft</span>
-            <span>·</span>
-            <span>Floor {selectedRoom.floor}</span>
-          </div>
+          {/* Room size — editable ft + in inputs */}
+          {(() => {
+            const toFtIn = (dec: number) => ({ ft: Math.floor(dec), inch: Math.round((dec - Math.floor(dec)) * 12) });
+            const fromFtIn = (ft: number, inch: number) => parseFloat((ft + inch / 12).toFixed(4));
+            const wFI = toFtIn(selectedRoom.w);
+            const hFI = toFtIn(selectedRoom.h);
+            const sqFt = (selectedRoom.w * selectedRoom.h).toFixed(1);
+            return (
+              <div className="px-4 py-3 border-b border-slate-800 bg-slate-900/60">
+                <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">Dimensions</p>
+                {/* Width row */}
+                <div className="mb-2">
+                  <label className="text-[10px] text-slate-400 font-mono block mb-1">Width</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number" min={0} max={200} step={1}
+                      className="w-16 bg-slate-800 text-emerald-300 font-mono font-bold text-sm rounded-md px-2 py-2 border border-slate-600 focus:border-emerald-500 focus:outline-none text-center"
+                      value={wFI.ft}
+                      onChange={e => {
+                        const ft = Math.max(0, parseInt(e.target.value, 10) || 0);
+                        const newW = fromFtIn(ft, wFI.inch);
+                        if (newW >= 1) onUpdateRoom({ ...selectedRoom, w: newW });
+                      }}
+                    />
+                    <span className="text-slate-400 text-xs font-mono">ft</span>
+                    <input
+                      type="number" min={0} max={11} step={1}
+                      className="w-14 bg-slate-800 text-emerald-300 font-mono font-bold text-sm rounded-md px-2 py-2 border border-slate-600 focus:border-emerald-500 focus:outline-none text-center"
+                      value={wFI.inch}
+                      onChange={e => {
+                        const inch = Math.min(11, Math.max(0, parseInt(e.target.value, 10) || 0));
+                        const newW = fromFtIn(wFI.ft, inch);
+                        if (newW >= 1) onUpdateRoom({ ...selectedRoom, w: newW });
+                      }}
+                    />
+                    <span className="text-slate-400 text-xs font-mono">in</span>
+                    <span className="text-slate-500 text-[10px] font-mono ml-1">= {selectedRoom.w.toFixed(2)}′</span>
+                  </div>
+                </div>
+                {/* Height row */}
+                <div className="mb-2">
+                  <label className="text-[10px] text-slate-400 font-mono block mb-1">Depth</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number" min={0} max={200} step={1}
+                      className="w-16 bg-slate-800 text-emerald-300 font-mono font-bold text-sm rounded-md px-2 py-2 border border-slate-600 focus:border-emerald-500 focus:outline-none text-center"
+                      value={hFI.ft}
+                      onChange={e => {
+                        const ft = Math.max(0, parseInt(e.target.value, 10) || 0);
+                        const newH = fromFtIn(ft, hFI.inch);
+                        if (newH >= 1) onUpdateRoom({ ...selectedRoom, h: newH });
+                      }}
+                    />
+                    <span className="text-slate-400 text-xs font-mono">ft</span>
+                    <input
+                      type="number" min={0} max={11} step={1}
+                      className="w-14 bg-slate-800 text-emerald-300 font-mono font-bold text-sm rounded-md px-2 py-2 border border-slate-600 focus:border-emerald-500 focus:outline-none text-center"
+                      value={hFI.inch}
+                      onChange={e => {
+                        const inch = Math.min(11, Math.max(0, parseInt(e.target.value, 10) || 0));
+                        const newH = fromFtIn(hFI.ft, inch);
+                        if (newH >= 1) onUpdateRoom({ ...selectedRoom, h: newH });
+                      }}
+                    />
+                    <span className="text-slate-400 text-xs font-mono">in</span>
+                    <span className="text-slate-500 text-[10px] font-mono ml-1">= {selectedRoom.h.toFixed(2)}′</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 mt-1 text-[11px] font-mono text-slate-400">
+                  <span className="text-emerald-400 font-bold">{sqFt} sq ft</span>
+                  <span>·</span>
+                  <span>Floor {selectedRoom.floor}</span>
+                  <span>·</span>
+                  <span>X: {selectedRoom.x.toFixed(1)}′  Y: {selectedRoom.y.toFixed(1)}′</span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── STAIRCASE DIRECTION ── */}
+          {selectedRoom.type === 'staircase' && (
+            <div className="px-4 py-3 border-b border-slate-800 bg-slate-900/60">
+              <p className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-2">Going Up Direction</p>
+              <div className="grid grid-cols-3 gap-1" style={{ maxWidth: 180 }}>
+                <div />
+                <button
+                  className={`py-1.5 rounded text-xs font-mono font-bold border transition ${(stairDirs[selectedRoom.id] || 'n') === 'n' ? 'bg-emerald-500 text-slate-900 border-emerald-400' : 'bg-slate-800 text-slate-400 border-slate-600 hover:border-emerald-500 hover:text-emerald-400'}`}
+                  onClick={() => setStairDirs(d => ({ ...d, [selectedRoom.id]: 'n' }))}
+                >↑ N</button>
+                <div />
+                <button
+                  className={`py-1.5 rounded text-xs font-mono font-bold border transition ${(stairDirs[selectedRoom.id] || 'n') === 'w' ? 'bg-emerald-500 text-slate-900 border-emerald-400' : 'bg-slate-800 text-slate-400 border-slate-600 hover:border-emerald-500 hover:text-emerald-400'}`}
+                  onClick={() => setStairDirs(d => ({ ...d, [selectedRoom.id]: 'w' }))}
+                >← W</button>
+                <div className="flex items-center justify-center text-slate-600 text-xs">✦</div>
+                <button
+                  className={`py-1.5 rounded text-xs font-mono font-bold border transition ${(stairDirs[selectedRoom.id] || 'n') === 'e' ? 'bg-emerald-500 text-slate-900 border-emerald-400' : 'bg-slate-800 text-slate-400 border-slate-600 hover:border-emerald-500 hover:text-emerald-400'}`}
+                  onClick={() => setStairDirs(d => ({ ...d, [selectedRoom.id]: 'e' }))}
+                >E →</button>
+                <div />
+                <button
+                  className={`py-1.5 rounded text-xs font-mono font-bold border transition ${(stairDirs[selectedRoom.id] || 'n') === 's' ? 'bg-emerald-500 text-slate-900 border-emerald-400' : 'bg-slate-800 text-slate-400 border-slate-600 hover:border-emerald-500 hover:text-emerald-400'}`}
+                  onClick={() => setStairDirs(d => ({ ...d, [selectedRoom.id]: 's' }))}
+                >↓ S</button>
+                <div />
+              </div>
+              <p className="text-[10px] text-slate-500 font-mono mt-2">Arrow shows which direction stairs ascend to the next floor</p>
+            </div>
+          )}
 
           {/* ── DOORS ── */}
           <div className="px-4 pt-3 pb-2">

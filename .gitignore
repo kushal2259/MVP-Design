@@ -4,3 +4,10 @@ node_modules/
 *.local
 
 tsconfig.tsbuildinfo
+
+# Render-worker build artifacts (regenerated; not source)
+render-worker/*.glb
+render-worker/*.mp4
+
+# Local scratch notes
+antigravity_local.md

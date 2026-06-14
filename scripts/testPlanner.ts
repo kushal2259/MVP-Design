@@ -51,6 +51,10 @@ for (const brief of briefs) {
     const o = plan.options[i];
     const s = c.scores;
     console.log(`  • ${c.strategyName.padEnd(20)} total=${s.total} adj=${s.adjacency} priv=${s.privacy} kitchen↔dining=${kdAdj(o.rooms)} entry-room=${entranceType(o.rooms)}`);
+    if (c.auditorReport) {
+      const allErrors = [...c.auditorReport.fatalIssues, ...c.auditorReport.majorIssues];
+      if (allErrors.length) console.log('    Errors:', allErrors.map(e => `      - ${e}`).join('\n'));
+    }
     for (let f = 0; f < req.floors; f++) totalOverlaps += checkFloor(o.rooms, f, o.id);
   });
   // diversity check: option-a vs option-b room name sets / sizes differ

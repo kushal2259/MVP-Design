@@ -56,6 +56,30 @@ function attachBedroomBaths(rooms: RoomSpec[], floor: number, m: AdjacencyMatrix
   });
 }
 
+/**
+ * Suite clustering (reference-plan pattern): each bedroom's walk-in closet
+ * ("<Bedroom Name> Closet") sits between the bedroom and its bath — strong
+ * adjacency to both so the slicer keeps the suite together.
+ */
+function attachBedroomClosets(rooms: RoomSpec[], floor: number, m: AdjacencyMatrix) {
+  const floorRooms = rooms.filter(r => r.floor === floor);
+  const closets = floorRooms.filter(r => (r.name || '').toLowerCase().includes('closet'));
+  for (const closet of closets) {
+    const bedName = (closet.name || '').replace(/\s*closet\s*$/i, '').trim().toLowerCase();
+    const bed = floorRooms.find(r => r.type === 'bedroom' && (r.name || '').toLowerCase() === bedName);
+    if (!bed) continue;
+    m[closet.id][bed.id] = 0.95;
+    m[bed.id][closet.id] = 0.95;
+    // and near that bedroom's bath (closet at the bath entrance)
+    const bedIdx = floorRooms.filter(r => r.type === 'bedroom').indexOf(bed);
+    const bath = floorRooms.filter(r => r.type === 'toilet')[bedIdx];
+    if (bath) {
+      m[closet.id][bath.id] = 0.9;
+      m[bath.id][closet.id] = 0.9;
+    }
+  }
+}
+
 export function generateAdjacencyMatrix(program: RoomProgram): AdjacencyMatrix {
   const m: AdjacencyMatrix = {};
   program.rooms.forEach(r => { m[r.id] = {}; });
@@ -71,6 +95,7 @@ export function generateAdjacencyMatrix(program: RoomProgram): AdjacencyMatrix {
       }
     }
     attachBedroomBaths(program.rooms, f, m);
+    attachBedroomClosets(program.rooms, f, m);
   }
   return m;
 }

@@ -53,6 +53,12 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 }
 
 /** Sends a password-reset email with a link back to /reset-password. */
+export async function verifyEmailOtp(email: string, token: string): Promise<{ ok: boolean; error?: string }> {
+  const { error } = await supabase.auth.verifyOtp({ email, token, type: 'signup' });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
 export async function sendPasswordReset(email: string): Promise<{ ok: boolean; error?: string }> {
   const redirectTo =
     typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined;

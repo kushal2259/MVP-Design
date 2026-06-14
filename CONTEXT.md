@@ -44,11 +44,11 @@ User prompt
 | `types.ts` | Shared pipeline types (`ParsedRequirements`, `RoomProgram`, `RoomSpec`, `AdjacencyMatrix`, `DesignStrategy`, `QualityReport`, `LayoutCandidate`). |
 | `requirementParser.ts` | LLM/regex → `ParsedRequirements`. Derives plot dims from area; detects facing (N/E/S/W), priorities, vastu, special rooms. Fixed floor-count regex (was NaN on "2 floors"). |
 | `ruleEngine.ts` | Configurable `RoomRule`s (min/max area, min width, zone, privacy, ventilation). `setRoomRule()` to extend. |
-| `constraintGenerator.ts` | Builds the `RoomProgram` (rooms per floor, target areas normalised to fill each floor), setbacks, front yard, FAR. **NBC-aware room dropping**: iteratively drops lowest-priority rooms when plot is too small to meet NBC §6 minimums. Exports `NBC_MIN_AREA` / `NBC_MIN_WIDTH` constants. |
-| `adjacency.ts` | `generateAdjacencyMatrix()` — pattern library: foyer→living, kitchen-dining-utility triangle, bedroom+en-suite bath, toilet↮kitchen/dining (negative). |
+| `constraintGenerator.ts` | Builds the `RoomProgram` (rooms per floor, target areas normalised to fill each floor), setbacks, front yard, FAR. **NBC-aware room dropping**: iteratively drops lowest-priority rooms when plot is too small to meet NBC §6 minimums. Exports `NBC_MIN_AREA` / `NBC_MIN_WIDTH` constants. **Hard rules:** Entrance Lobby always present (priority 9) and connected to Living Room; 1 bedroom = exactly 1 bathroom + 1 walk-in closet (~bath-sized, priority 3, near bath entrance); no balcony on ground floor; Family Lounge only on first upper floor; top habitable floor gets Open Terrace instead of Corridor. **Terrace floor always appended** (G+1/G+2/G+3): Staircase Cabin (locked, 100 sqft), Terrace Store (locked, exactly 10×6 ft), Open Terrace fills the rest. Returns `floors + 1` so the terrace level flows through the entire UI. |
+| `adjacency.ts` | `generateAdjacencyMatrix()` — pattern library: foyer→living, kitchen-dining-utility triangle, bedroom+en-suite bath, toilet↮kitchen/dining (negative). **Suite clustering**: each "<Bedroom> Closet" gets strong adjacency to its bedroom (0.95) and that bedroom's bath (0.9) so bedroom+bath+closet stay together (learned from user's reference plan). |
 | `strategies.ts` | 9 strategies: Family, Luxury, Privacy, Courtyard, Vastu, Open Space, Modern Villa, Future Expansion, Compact. `selectStrategies()` biases by priorities. |
 | `planningEngine.ts` | Macro-zoning (public/service/circ/private) + greedy adjacency-chain ordering. Seeded RNG. |
-| `geometryEngine.ts` | `buildGeometry()` — correct coordinate system: yard at `setbacks.front`, building above yard. `vastuPlace()` (Ashtadik even-thirds grid), `ensureMainEntrance()` (entrance only on foyer/living), `applyOverrides()`, `makeRoom()`. Exports `NBC_MIN_WIDTH_GEO`. |
+| `geometryEngine.ts` | `buildGeometry()` — correct coordinate system: yard at `setbacks.front`, building above yard (ground floor only — upper floors use full-depth `upperBuildRect`). `vastuPlace()` (Ashtadik even-thirds grid), `ensureMainEntrance()` (entrance only on foyer/living), `applyOverrides()`, `makeRoom()`. Exports `NBC_MIN_WIDTH_GEO` (staircase min 10 ft). **Staircase locking:** ground-floor staircase rect (`lockedStairRect`) is forced onto every upper floor + terrace; overlapping rooms are clipped away and `fillAllGaps()` runs again after the clip pass. `fillAllGaps(rectMap, rect, lockedIds)` expands rooms 4-directionally to nearest neighbour/boundary; locked rooms are never resized. **Terrace floor bypasses the slicer**: Staircase Cabin hard-placed at `lockedStairRect`, Terrace Store exactly 10×6 ft adjacent (below, else right), Open Terrace = full floor rect rendered first (SVG background) so the cabin/store stay visible on top. |
 | `qualityEngine.ts` | Critic. Adjacency-satisfaction is the dominant metric. Returns per-criterion + total + accept/reject. |
 | `optimizer.ts` | `optimizeDetailed()` — ~28 candidates/strategy, rejects < threshold (58), returns diverse top-3. |
 | `revisionEngine.ts` | Partial regeneration: lock rooms, resize, re-normalise, re-tile. (Built; UI not yet fully wired.) |
@@ -77,14 +77,36 @@ Rendered by `DrawingCatalogView.tsx` with Option A/B/C + floor switchers, approv
 
 ## 4. App structure (`src/`)
 - `app/page.tsx` — landing (auth modal: sign in/up/forgot; **detects `type=recovery` in URL and forwards to `/reset-password`**).
-- `app/dashboard/page.tsx` — auth-gated project list.
+- `app/dashboard/page.tsx` — **building-type selector** (Bungalow/Houses · Apartment · Apartment+Commercial · Commercial). Main page → Dashboard lands here.
+- `app/dashboard/bungalow/page.tsx` — auth-gated residential project list (the original dashboard; the full pipeline below serves this module).
+- `app/dashboard/apartment|mixed-use|commercial/page.tsx` — **live module dashboards** (real project lists filtered by `buildingType`, "+ New" CTA, delete, plus a collapsible deliverables catalog). Thin wrappers over `components/ModuleProjectDashboard.tsx`.
+- `app/{apartment,mixed-use,commercial}/new/page.tsx` — generation wizards (thin wrappers over `components/ModuleWizardShell.tsx`); collect a typed config, run the engine, save a `Project` with `buildingType` + `moduleData`, route to the workspace.
+- `app/{apartment,mixed-use,commercial}/[id]/page.tsx` — workspaces; thin wrappers that read `moduleData` and render `components/ModuleWorkspace.tsx`.
+- Bungalow project pages / new-project wizard back-link to `/dashboard/bungalow` (residential module).
+
+### Module engines (deterministic, no LLM — same golden rule as the bungalow planner)
+| File | Builds |
+|---|---|
+| `lib/apartmentEngine.ts` | `generateApartment(config)` — G+4…G+12 towers. Ground (lobby/lift/stair core + parking + garden + services), one Typical floor (units 1–4 around a rear-corner core, each subdivided into living/kitchen/bedrooms/baths/balcony by proportional slicing), optional Refuge floor (>7 storeys), Terrace (stair cabin + lift machine room + OHT + open roof). `validateNoOverlaps`. |
+| `lib/mixedUseEngine.ts` | `generateMixedUse(config)` — shops on ground (+ optional first), typical residential floor above, terrace. Shared lift/stair core locked to identical rects on every floor. |
+| `lib/commercialEngine.ts` | `generateCommercial(config)` — office/mall/hotel/hospital/school. Rear-center service core (2 lifts + fire stair + toilets + AHU) + second escape stair (NBC two-exit). Per-use typical-floor program; roof plant level. Returns `occFactor` for the occupancy tab. |
+
+All three: floors are **representative plates** (one Typical stands for floors 1..N — never generate every repeated floor). Coordinates in feet, `(0,0)` = plot corner. `scripts/testModules.ts` runtime-asserts 0 overlaps across configs (`npx tsx scripts/testModules.ts`).
+
+### Shared module UI / engineering
+- `components/ModuleWorkspace.tsx` — **one generic workspace** rendering the full MVP→V3 tab set for all three modules: Overview · Floor Plans · (Unit Mix / Occupancy) · Elevations · Section · Schedules · **Structural · Plumbing · Electrical** (V2) · **HVAC · Fire · Compliance · Cost · BOQ · 3D · Site Visits** (V3). Floor tabs derived from room data; reuses `FloorPlanV2Renderer`, `ThreeDViewerV2`, `generateElevation`, `SiteVisitsTab`.
+- `lib/moduleEngineering.ts` — deterministic discipline overlays as SVG strings (`renderDiscipline`: structural column-grid+beams, plumbing supply/drainage, electrical DB+points+runs, HVAC AHU+ducts+diffusers, fire sprinklers+extinguishers+exit arrows), `renderSection` (stacked-slab cross-section), `doorSchedule`/`windowSchedule`, `complianceReport`, `costEstimate`, `boq`.
+- `components/ModuleDashboard.tsx` — retained only for its `DrawingGroup`/`ModuleConfig` types + the building-type-selector card art. The dashboards themselves are now `ModuleProjectDashboard`.
+
+### Shared types
+`Project.buildingType?: 'bungalow'|'apartment'|'mixed-use'|'commercial'` + `Project.moduleData?` (stores `{ config, stats, floorLabels, rooms }`). `RoomLayout.type` union extended with `shop|office|lift|refuge|utility|unit|foodcourt|reception|store` (kept in sync in BOTH `types/index.ts` and `lib/layoutSolver.ts`). All renderers fall back to default colors for unknown types; engines set explicit `color`.
 - `app/project/new/page.tsx` — 4-step wizard (+ voice input).
 - `app/project/[id]/page.tsx` — workspace (all tabs). Largest file.
 - `app/reset-password/page.tsx` — Supabase recovery (listens for `PASSWORD_RECOVERY` event).
 - `app/api/ai/route.ts` — server-side Gemini proxy (key off browser, 5-min cache, retry).
 - `app/api/reminders/test/route.ts` — authenticated (Bearer token) SMTP test endpoint.
 - `app/api/reminders/run/route.ts` — cron target; IST-aware, sends three windows per visit (day-before / 9am / hour-before), tracks in `visit.remindersSent`. Requires `SUPABASE_SERVICE_ROLE_KEY`.
-- `components/` — DrawingViewport (CAD editor), ThreeDViewerV2 (orbit/walkthrough/cinematic), InteriorRenderView (dollhouse + doors + first-person + bloom + day-night + GLB export + Record Reel), FloorPlanV2Renderer, DrawingCatalogView, **SiteVisitsTab** (full CRUD, Supabase sync, reminder email field, ✉ Test button), CopilotChat.
+- `components/` — DrawingViewport (CAD editor; `floorOverride?: number` prop selects the exact floor index, bypassing the legacy ground/first/terrace string mapping), ThreeDViewerV2 (orbit/walkthrough/cinematic), InteriorRenderView (dollhouse + doors + first-person + bloom + day-night + GLB export + Record Reel), FloorPlanV2Renderer, DrawingCatalogView, **SiteVisitsTab** (full CRUD, Supabase sync, reminder email field, ✉ Test button), CopilotChat.
 - `lib/store.ts` — Supabase auth + projects CRUD + `getProjectVisits` / `saveProjectVisits`.
 - `lib/supabase.ts` — client. **Exports `SUPABASE_URL` and `SUPABASE_ANON_KEY`** (hardcoded fallbacks so server routes don't get `undefined` when env vars not set on Vercel).
 - `lib/email.ts` — Nodemailer Gmail SMTP (server-only). Explicit `smtp.gmail.com:465` with fast timeouts so it fails cleanly instead of hanging to an empty 500.
@@ -95,6 +117,13 @@ Overview · Floor Plans · CAD Editor · 3D View · Elevations · Interior ·
 Vastu Score · Sun & Ventilation · Structural · Electrical · Plumbing · HVAC ·
 Fire Safety · Site Plans · Cost Est. · BOQ · Timeline · **Site Visits** ·
 Compliance · Export.
+
+### Floor tabs / naming (page.tsx)
+- `floorLabel(idx, totalFloors)` — Ground / First / Second… and the **last floor is always "Terrace"**.
+- Floor tab lists are derived **dynamically from room data** (`Array.from(new Set(rooms.map(r => r.floor)))`), not from `req.floors` — so the terrace tab shows up in Floor Plans, CAD Editor, and all engineering views regardless of G+1/G+2/G+3.
+- CAD editor passes `floorOverride={activeFloorNum}` to DrawingViewport so any floor index renders correctly.
+- **Staircase resize sync (CAD):** shrinking a staircase propagates the smaller size to staircases on every floor; enlarging it stays local to that floor.
+- **Bathroom sizing:** `runSpaceAllocation` resolves standards via `getRoomStandard(type, name)` (attached vs common bath) and clamps to both `minArea` and `maxArea` — no more oversized baths. Staircase standard: 10×10 min, 15×15 max.
 
 ---
 
@@ -201,7 +230,7 @@ Five test plans run. Six critical/major issues found and fixed (commit `9aa6e09`
 |---|---|
 | Version compare/history UI | `revisionEngine` + `projectMemory` exist; only "Regenerate" wired in UI. |
 | DWG / IFC export | Path documented; needs ODA/Forge (DWG) or `web-ifc` (IFC). PDF/PNG/JPG/SVG/DXF/CSV done. |
-| Staircase geometry (fixed slot) | Slicer assigns arbitrary aspect; should reserve ~10×8ft. |
+| Staircase geometry (fixed slot) | Done: 10×10–15×15 standard + cross-floor position locking (`lockedStairRect`). |
 | Vastu full geometric facing rotation | Entrance follows facing; absolute-compass placement stays (architecturally correct). |
 | Photoreal render in-app | GLB export + Blender worker exists; in-app trigger UI not yet built. |
 | Gemini billing | Code ready; user must enable billing on Google account. |

@@ -127,7 +127,6 @@ export interface CandidateScores {
   total: number;               // weighted 0..100
 }
 
-/** Output of the Architectural Quality Engine (critic). */
 export interface QualityReport {
   adjacency: number;
   privacy: number;
@@ -137,8 +136,135 @@ export interface QualityReport {
   spaceUtilization: number;
   structural: number;
   vastu: number;
+  naturalLight: number;
+  plumbing: number;
+  accessibility: number;
+  futureExpansion: number;
+  costEfficiency: number;
+  furnitureUsability: number;
+  constructionPracticality: number;
+  marketAppeal: number;
+  aestheticBalance: number;
+  preferenceMatch: number;
   total: number;
+  totalScore: number;
   accept: boolean;
+}
+
+export type MacroZone = 'public' | 'semi_private' | 'private' | 'service' | 'circ';
+
+export interface ZoneInfo {
+  roomId: string;
+  zone: MacroZone;
+  privacyLevel: number;
+}
+
+export interface AdjacencyRelation {
+  fromRoomId: string;
+  toRoomId: string;
+  type: 'must_connect' | 'preferred' | 'should_avoid';
+  weight: number;
+}
+
+export interface CirculationDecisions {
+  corridorWidth: number;
+  staircaseReservingBox: { w: number; h: number };
+  lobbyWidth: number;
+}
+
+export interface PrivacyDecisions {
+  roomPrivacyClasses: Record<string, 'PUBLIC' | 'SEMI_PRIVATE' | 'PRIVATE' | 'SERVICE'>;
+  requireBufferCorridor: string[];
+}
+
+export interface ServiceCoreDecisions {
+  wetCoreCentroidFraction: { x: number; y: number };
+  wetRoomIds: string[];
+  maxDistanceFromCore: Record<string, number>;
+}
+
+export interface StructuralDecisions {
+  preferredSpan: number;
+  maxSpan: number;
+  columnPositions: { x: number; y: number }[];
+}
+
+export interface NaturalLightDecisions {
+  windowAreaFractions: Record<string, number>;
+  requiresExternalWall: string[];
+}
+
+export interface SpaceDecisions {
+  allocatedAreas: Record<string, number>;
+}
+
+export interface PlotDecisions {
+  facing: 'N' | 'E' | 'S' | 'W';
+  isCornerPlot: boolean;
+  isIrregularPlot: boolean;
+  setbacks: Setbacks;
+  buildableRect: { w: number; h: number };
+  entranceRoomId: string;
+  entranceSide: 'front' | 'back' | 'left' | 'right';
+}
+
+export interface FutureExpansionDecisions {
+  allowVerticalGrow: boolean;
+  foundationLoadMultiplier: number;
+  gridAlignRequired: boolean;
+}
+
+export interface PlanningDecisions {
+  strategy: DesignStrategy;
+  zones: ZoneInfo[];
+  adjacencies: AdjacencyRelation[];
+  circulation: CirculationDecisions;
+  privacy: PrivacyDecisions;
+  serviceCore: ServiceCoreDecisions;
+  structural: StructuralDecisions;
+  naturalLight: NaturalLightDecisions;
+  spaceAllocation: SpaceDecisions;
+  plotAdaptation: PlotDecisions;
+  futureExpansion: FutureExpansionDecisions;
+  orderedRooms: RoomSpec[];
+}
+
+export interface BuildabilityReport {
+  structuralLoadSafety: 'excellent' | 'good' | 'fair' | 'poor';
+  plumbingGrouping: 'optimal' | 'standard' | 'dispersed';
+  constructionComplexity: 'low' | 'medium' | 'high';
+  estimatedMaterialWastePercent: number;
+  complianceWarnings: string[];
+}
+
+export interface PlanExplanation {
+  conceptTagline: string;
+  zoningJustification: string;
+  circulationHighlights: string;
+  ventilationStrengths: string;
+  roomLayoutDetails: string;
+}
+
+export interface ComparativeRanking {
+  rankedOptionIds: string[];
+  rankings: {
+    optionId: string;
+    rank: number;
+    score: number;
+    bestFor: string;
+    worseFor: string;
+    summary: string;
+  }[];
+}
+
+export interface AuditorReport {
+  fatalIssues: string[];
+  majorIssues: string[];
+  minorIssues: string[];
+  suggestions: string[];
+  recommendations: string[];
+  buildability: BuildabilityReport;
+  explanation: PlanExplanation;
 }
 
 export interface LayoutCandidate {
@@ -149,7 +275,10 @@ export interface LayoutCandidate {
   costMultiplier: number;
   rooms: RoomLayout[];
   scores: QualityReport;
-  seedName?: string;            // e.g. "courtyard_v3" — reproducible design seed
+  seedName?: string;
+  planningDecisions?: PlanningDecisions;
+  auditorReport?: AuditorReport;
 }
 
 export type { RoomLayout, PlotSettings };
+

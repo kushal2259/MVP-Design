@@ -13,7 +13,9 @@ import { generateDetailedBOQ, calcEMI, formatINR, boqToCSV, type Tier } from '@/
 import { analyzeSunVent } from '@/lib/sunPathEngine';
 import { generateElevation, type ElevSide } from '@/lib/elevationGenerator';
 import { useIsMobile } from '@/lib/useIsMobile';
+import { auditPlan, rankPlans, evaluate } from '@/lib/planner/qualityEngine';
 import type { Project, ActiveTab, FloorPlan, PlotSettings, LayoutOption } from '@/types';
+import type { AuditorReport, ComparativeRanking } from '@/lib/planner/types';
 import dynamic from 'next/dynamic';
 
 const FloorPlanRenderer = dynamic(() => import('@/components/FloorPlanRenderer'), { ssr: false });
@@ -29,6 +31,14 @@ const InteriorProductsCatalog = dynamic(() => import('@/components/InteriorProdu
 const InteriorRenderView = dynamic(() => import('@/components/InteriorRenderView'), { ssr: false });
 const DrawingCatalogView = dynamic(() => import('@/components/DrawingCatalogView'), { ssr: false });
 const SiteVisitsTab = dynamic(() => import('@/components/SiteVisitsTab'), { ssr: false });
+
+const FLOOR_ORDINALS = ['Ground', 'First', 'Second', 'Third', 'Fourth', 'Fifth'];
+/** Returns the display name for a floor index given the total number of floors (including terrace). */
+function floorLabel(idx: number, totalFloors: number): string {
+  if (idx === 0) return 'Ground Floor';
+  if (idx === totalFloors - 1) return 'Terrace'; // last floor is always the terrace
+  return `${FLOOR_ORDINALS[idx] ?? `Floor ${idx}`} Floor`;
+}
 
 const TABS: { id: ActiveTab; label: string; icon: string; group?: string }[] = [
   { id: 'overview', label: 'Overview', icon: '◎' },
@@ -50,6 +60,7 @@ const TABS: { id: ActiveTab; label: string; icon: string; group?: string }[] = [
   { id: 'timeline', label: 'Timeline', icon: '▷', group: 'Estimates' },
   { id: 'site-visits', label: 'Site Visits', icon: '◷', group: 'Admin' },
   { id: 'compliance', label: 'Compliance', icon: '✓' },
+  { id: 'ai-reviewer', label: 'AI Reviewer', icon: '🤖' },
   { id: 'export', label: 'Export', icon: '↗' },
 ];
 
@@ -66,6 +77,25 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [editedFloorPlans, setEditedFloorPlans] = useState<FloorPlan[] | null>(null);
   const [layoutOptions, setLayoutOptions] = useState<LayoutOption[] | null>(null);
   const [selectedLayoutId, setSelectedLayoutId] = useState<'option-a' | 'option-b' | 'option-c'>('option-a');
+
+  const handleCADRoomUpdate = (layoutId: string, updatedRoom: import('@/types').RoomLayout) => {
+    setLayoutOptions(prev => prev ? prev.map(opt => {
+      if (opt.id !== layoutId) return opt;
+      let rooms = opt.rooms.map(r => r.id === updatedRoom.id ? updatedRoom : r);
+      // Staircase: shrinking propagates to all floors (shaft must fit), enlarging doesn't
+      if (updatedRoom.type === 'staircase') {
+        rooms = rooms.map(r => {
+          if (r.type !== 'staircase' || r.id === updatedRoom.id) return r;
+          return {
+            ...r,
+            w: updatedRoom.w < r.w ? updatedRoom.w : r.w,
+            h: updatedRoom.h < r.h ? updatedRoom.h : r.h,
+          };
+        });
+      }
+      return { ...opt, rooms };
+    }) : prev);
+  };
   const [geminiKey, setGeminiKey] = useState('');
   const isMobile = useIsMobile();
 
@@ -182,7 +212,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   if (!mounted) return null;
   if (!project) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-body)' }}>
-      <div>Project not found. <Link href="/dashboard">← Dashboard</Link></div>
+      <div>Project not found. <Link href="/dashboard/bungalow">← Dashboard</Link></div>
     </div>
   );
 
@@ -199,7 +229,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         backgroundColor: 'white',
         position: 'sticky', top: 0, zIndex: 100,
       }}>
-        <Link href="/dashboard" style={{ color: 'var(--steel)', textDecoration: 'none', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Link href="/dashboard/bungalow" style={{ color: 'var(--steel)', textDecoration: 'none', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 4L6 8l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
           Dashboard
         </Link>
@@ -435,6 +465,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   setEditedFloorPlans(plans);
                   saveProject({ ...project, floorPlans: plans });
                 }}
+                onUpdateRoomInLayout={handleCADRoomUpdate}
               />
             )}
             {activeTab === '3d-view' && (
@@ -455,6 +486,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                   setEditedFloorPlans(plans);
                   saveProject({ ...project, floorPlans: plans });
                 }}
+                layoutOptions={layoutOptions}
+                selectedLayoutId={selectedLayoutId}
               />
             )}
             {activeTab === 'vastu' && <VastuTab project={project} layoutOptions={layoutOptions} selectedLayoutId={selectedLayoutId} />}
@@ -474,6 +507,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             {activeTab === 'timeline' && <TimelineTab project={project} />}
             {activeTab === 'site-visits' && <SiteVisitsTab project={project} />}
             {activeTab === 'compliance' && <ComplianceTab project={project} complianceData={complianceData} />}
+            {activeTab === 'ai-reviewer' && <AIReviewerTab project={project} />}
             {activeTab === 'export' && <ExportTab project={project} />}
           </div>
         </div>
@@ -737,7 +771,7 @@ function OverviewTab({ project, analysisData }: { project: Project; analysisData
             }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 500 }}>
-                  {plan.floor === 0 ? 'Ground Floor' : plan.floor === 1 ? 'First Floor' : plan.floor === 2 ? 'Second Floor' : 'Terrace'}
+                  {floorLabel(plan.floor, project.floorPlans?.length ?? 1)}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--steel)' }}>{plan.rooms.length} rooms / spaces</div>
               </div>
@@ -856,9 +890,11 @@ function FloorPlansTab({
           {/* Floor selector for selected layout */}
           {selectedLayout && (
             <>
-              {project.requirements.floors > 1 && (
-                <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-                  {Array.from(new Set(selectedLayout.rooms.map(r => r.floor))).sort().map(fl => (
+              {(() => {
+                const floorIds = Array.from(new Set(selectedLayout.rooms.map(r => r.floor))).sort();
+                return floorIds.length > 1 && (
+                <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+                  {floorIds.map(fl => (
                     <button key={fl} onClick={() => setSelectedFloor(fl)} style={{
                       padding: '7px 18px', borderRadius: 4, fontSize: 12,
                       border: `1.5px solid ${selectedFloor === fl ? 'var(--blueprint)' : 'var(--line-strong)'}`,
@@ -866,11 +902,12 @@ function FloorPlansTab({
                       color: selectedFloor === fl ? 'white' : 'var(--steel)',
                       cursor: 'pointer', fontFamily: 'var(--font-body)',
                     }}>
-                      {fl === 0 ? 'Ground Floor' : fl === 1 ? 'First Floor' : fl === 2 ? 'Second Floor' : 'Terrace'}
+                      {floorLabel(fl, floorIds.length)}
                     </button>
                   ))}
                 </div>
-              )}
+              );
+              })()}
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: 24 }}>
                 <div style={{ border: '1px solid var(--line)', borderRadius: 6, overflow: 'hidden', backgroundColor: 'white', padding: 16 }}>
@@ -909,7 +946,7 @@ function FloorPlansTab({
                 color: selectedFloor === i ? 'white' : 'var(--steel)',
                 fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
               }}>
-                {i === 0 ? 'Ground Floor' : i === 1 ? 'First Floor' : i === 2 ? 'Second Floor' : 'Terrace'}
+                {floorLabel(i, plans.length)}
               </button>
             ))}
           </div>
@@ -945,26 +982,25 @@ function FloorPlansTab({
   );
 }
 
-function CADEditorTab({ project, editedPlans, layoutOptions, selectedLayoutId, onSelectLayout, onPlansChange }: {
+function CADEditorTab({ project, editedPlans, layoutOptions, selectedLayoutId, onSelectLayout, onPlansChange, onUpdateRoomInLayout }: {
   project: Project;
   editedPlans: FloorPlan[] | null;
   layoutOptions: LayoutOption[] | null;
   selectedLayoutId: 'option-a' | 'option-b' | 'option-c';
   onSelectLayout: (id: 'option-a' | 'option-b' | 'option-c') => void;
   onPlansChange: (plans: FloorPlan[]) => void;
+  onUpdateRoomInLayout: (layoutId: string, updatedRoom: import('@/types').RoomLayout) => void;
 }) {
   const [viewMode, setViewMode] = useState<'vastu' | 'legacy'>('vastu');
-  const [activeTab, setActiveTab] = useState<'ground' | 'first' | 'terrace'>('ground');
+  const [activeFloorNum, setActiveFloorNum] = useState<number>(0);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
-  const [layoutRooms, setLayoutRooms] = useState(() =>
-    layoutOptions?.find(l => l.id === selectedLayoutId)?.rooms || []
-  );
 
-  // Sync when selection changes
+  // Use layoutOptions rooms directly (no local copy) so edits propagate to all tabs
   const selectedLayout = layoutOptions?.find(l => l.id === selectedLayoutId);
+  const layoutRooms = selectedLayout?.rooms || [];
 
   const handleUpdateRoom = (updatedRoom: import('@/types').RoomLayout) => {
-    setLayoutRooms(prev => prev.map(r => r.id === updatedRoom.id ? updatedRoom : r));
+    onUpdateRoomInLayout(selectedLayoutId, updatedRoom);
   };
 
   const req = project.requirements;
@@ -975,28 +1011,26 @@ function CADEditorTab({ project, editedPlans, layoutOptions, selectedLayoutId, o
   };
 
   if (viewMode === 'vastu' && selectedLayout) {
-    const floorTabs: ('ground' | 'first' | 'terrace')[] = ['ground'];
-    if (req.floors >= 2) floorTabs.push('first');
-    if (req.floors >= 3) floorTabs.push('terrace');
-    const floorNum = activeTab === 'ground' ? 0 : activeTab === 'first' ? 1 : 2;
-    const currentRooms = layoutRooms.filter(r => r.floor === floorNum);
+    const floorIds = Array.from(new Set(layoutRooms.map(r => r.floor))).sort((a, b) => a - b);
+    const activeTab = floorIds.includes(activeFloorNum) ? activeFloorNum : (floorIds[0] ?? 0);
+    const currentRooms = layoutRooms.filter(r => r.floor === activeTab);
 
     return (
       <div style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexShrink: 0, flexWrap: 'wrap' }}>
           <SectionTitle>CAD Editor</SectionTitle>
           {/* Floor tabs */}
-          {floorTabs.length > 1 && (
+          {floorIds.length > 1 && (
             <div style={{ display: 'flex', gap: 6 }}>
-              {floorTabs.map(f => (
-                <button key={f} onClick={() => setActiveTab(f)} style={{
+              {floorIds.map(fl => (
+                <button key={fl} onClick={() => setActiveFloorNum(fl)} style={{
                   padding: '5px 14px', borderRadius: 4, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
-                  border: `1.5px solid ${activeTab === f ? 'var(--blueprint)' : 'var(--line-strong)'}`,
-                  backgroundColor: activeTab === f ? 'var(--blueprint)' : 'white',
-                  color: activeTab === f ? 'white' : 'var(--steel)',
-                  fontWeight: activeTab === f ? 600 : 400,
+                  border: `1.5px solid ${activeTab === fl ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+                  backgroundColor: activeTab === fl ? 'var(--blueprint)' : 'white',
+                  color: activeTab === fl ? 'white' : 'var(--steel)',
+                  fontWeight: activeTab === fl ? 600 : 400,
                 }}>
-                  {f === 'ground' ? 'Ground Floor' : f === 'first' ? 'First Floor' : 'Second Floor'}
+                  {floorLabel(fl, floorIds.length)}
                 </button>
               ))}
             </div>
@@ -1007,7 +1041,6 @@ function CADEditorTab({ project, editedPlans, layoutOptions, selectedLayoutId, o
               return opt ? (
                 <button key={id} onClick={() => {
                   onSelectLayout(id);
-                  setLayoutRooms(layoutOptions?.find(l => l.id === id)?.rooms || []);
                 }} style={{
                   padding: '5px 14px', borderRadius: 4, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
                   border: `1.5px solid ${selectedLayoutId === id ? 'var(--amber)' : 'var(--line-strong)'}`,
@@ -1024,6 +1057,30 @@ function CADEditorTab({ project, editedPlans, layoutOptions, selectedLayoutId, o
               border: '1.5px solid var(--line-strong)', background: 'white', color: 'var(--steel)',
               fontFamily: 'var(--font-body)',
             }}>Standard View</button>
+            <button onClick={() => {
+              const floorRooms = layoutRooms.filter(r => r.floor === activeTab && r.type !== 'parking' && r.type !== 'garden');
+              if (floorRooms.length < 2) return;
+              const minX = Math.min(...floorRooms.map(r => r.x));
+              const minY = Math.min(...floorRooms.map(r => r.y));
+              const maxX = Math.max(...floorRooms.map(r => r.x + r.w));
+              const maxY = Math.max(...floorRooms.map(r => r.y + r.h));
+              for (const r of floorRooms) {
+                let changed = { ...r };
+                if (Math.abs((r.x + r.w) - maxX) > 0.1 && Math.abs((r.x + r.w) - maxX) < 6) {
+                  changed = { ...changed, w: parseFloat((maxX - changed.x).toFixed(1)) };
+                }
+                if (Math.abs((r.y + r.h) - maxY) > 0.1 && Math.abs((r.y + r.h) - maxY) < 6) {
+                  changed = { ...changed, h: parseFloat((maxY - changed.y).toFixed(1)) };
+                }
+                if (changed.w !== r.w || changed.h !== r.h) {
+                  onUpdateRoomInLayout(selectedLayoutId, changed);
+                }
+              }
+            }} style={{
+              padding: '5px 14px', borderRadius: 4, fontSize: 12, cursor: 'pointer',
+              border: '1.5px solid var(--blueprint)', background: 'white', color: 'var(--blueprint)',
+              fontFamily: 'var(--font-body)',
+            }}>⬛ Fill Gaps</button>
           </div>
         </div>
         <div style={{ flex: 1, overflow: 'hidden', borderRadius: 8, border: '1px solid var(--line)' }}>
@@ -1033,7 +1090,8 @@ function CADEditorTab({ project, editedPlans, layoutOptions, selectedLayoutId, o
             selectedRoomId={selectedRoomId}
             onSelectRoom={setSelectedRoomId}
             onUpdateRoom={handleUpdateRoom}
-            activeTab={activeTab}
+            activeTab="ground"
+            floorOverride={activeTab}
             elevationSide="front"
             sectionType="cross"
             siteSvg=""
@@ -1074,7 +1132,7 @@ function CADEditorTab({ project, editedPlans, layoutOptions, selectedLayoutId, o
             color: selectedFloor === i ? 'white' : 'var(--steel)',
             cursor: 'pointer', fontFamily: 'var(--font-body)',
           }}>
-            {i === 0 ? 'Ground Floor' : i === 1 ? 'First Floor' : i === 2 ? 'Second Floor' : 'Terrace'}
+            {floorLabel(i, plans.length)}
           </button>
         ))}
       </div>
@@ -1131,14 +1189,17 @@ function ThreeDViewTab({ project, editedPlans, layoutOptions, selectedLayoutId }
             ))}
           </div>
         )}
-        {viewType === 'interior' && req.floors > 1 && (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Floor:</span>
-            {Array.from({ length: req.floors }, (_, f) => (
-              <button key={f} onClick={() => setFloor(f)} style={chip(floor === f)}>{f === 0 ? 'Ground' : f === 1 ? 'First' : 'Second'}</button>
-            ))}
-          </div>
-        )}
+        {viewType === 'interior' && (() => {
+          const floorIds = Array.from(new Set((selectedRooms || []).map(r => r.floor))).sort((a, b) => a - b);
+          return floorIds.length > 1 && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Floor:</span>
+              {floorIds.map(f => (
+                <button key={f} onClick={() => setFloor(f)} style={chip(floor === f)}>{floorLabel(f, floorIds.length)}</button>
+              ))}
+            </div>
+          );
+        })()}
       </div>
       <p style={{ fontSize: 12, color: 'var(--steel)', marginBottom: 16 }}>
         {viewType === 'walkthrough'
@@ -1216,12 +1277,16 @@ function ElevationsTab({ project, layoutOptions, selectedLayoutId }: { project: 
   );
 }
 
-function InteriorTab({ project, interiorData, editedPlans, onPlansChange }: {
+function InteriorTab({ project, interiorData, editedPlans, onPlansChange, layoutOptions, selectedLayoutId }: {
   project: Project;
   interiorData: { concepts: unknown[] } | null;
   editedPlans: FloorPlan[] | null;
   onPlansChange: (plans: FloorPlan[]) => void;
+  layoutOptions: LayoutOption[] | null;
+  selectedLayoutId: 'option-a' | 'option-b' | 'option-c';
 }) {
+  const [activeOptionId, setActiveOptionId] = useState(selectedLayoutId);
+  const [interiorFloor, setInteriorFloor] = useState(0);
   const req = project.requirements;
   const roomImages: Record<string, string> = {
     'Living Room': '🛋',
@@ -1254,8 +1319,68 @@ function InteriorTab({ project, interiorData, editedPlans, onPlansChange }: {
         AI-generated interior concepts for {req.style.charAt(0).toUpperCase() + req.style.slice(1)} style, ₹{req.budget}L budget, {req.location}.
       </p>
 
-      {/* Products Catalog */}
-      {(editedPlans || project.floorPlans) && (
+      {/* Layout Option Switcher */}
+      {layoutOptions && layoutOptions.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', marginRight: 4 }}>Layout Option:</span>
+          {layoutOptions.map((o, i) => (
+            <button key={o.id} onClick={() => setActiveOptionId(o.id as 'option-a' | 'option-b' | 'option-c')} style={{
+              padding: '5px 14px', borderRadius: 100, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+              border: `1.5px solid ${activeOptionId === o.id ? 'var(--amber)' : 'var(--line-strong)'}`,
+              backgroundColor: activeOptionId === o.id ? 'var(--amber)' : 'white',
+              color: activeOptionId === o.id ? 'white' : 'var(--steel)',
+              fontWeight: activeOptionId === o.id ? 600 : 400,
+            }}>
+              {String.fromCharCode(65 + i)} · {o.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Live 3D interior + per-floor room summary for the selected option */}
+      {layoutOptions && (() => {
+        const opt = layoutOptions.find(o => o.id === activeOptionId);
+        if (!opt) return null;
+        const floorIds = Array.from(new Set(opt.rooms.map(r => r.floor))).sort((a, b) => a - b);
+        const fl = floorIds.includes(interiorFloor) ? interiorFloor : (floorIds[0] ?? 0);
+        const rooms = opt.rooms.filter(r => r.floor === fl && r.type !== 'parking' && r.type !== 'garden');
+        const ps: PlotSettings = project.plotSettings || {
+          width: req.plotWidth, depth: req.plotDepth, location: req.location,
+          floors: req.floors, style: 'modern', budgetLakhs: req.budget,
+          bedrooms: req.bhk, kitchenStyle: 'large', balconyRequired: true,
+        };
+        return (
+          <div style={{ marginBottom: 36 }}>
+            {floorIds.length > 1 && (
+              <div style={{ display: 'flex', gap: 6, marginBottom: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', marginRight: 4 }}>Floor:</span>
+                {floorIds.map(f => (
+                  <button key={f} onClick={() => setInteriorFloor(f)} style={{
+                    padding: '5px 14px', borderRadius: 100, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+                    border: `1.5px solid ${fl === f ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+                    backgroundColor: fl === f ? 'var(--blueprint)' : 'white',
+                    color: fl === f ? 'white' : 'var(--steel)',
+                    fontWeight: fl === f ? 600 : 400,
+                  }}>
+                    {floorLabel(f, floorIds.length)}
+                  </button>
+                ))}
+              </div>
+            )}
+            <InteriorRenderView key={`${activeOptionId}-${fl}`} rooms={opt.rooms} settings={ps} floor={fl} />
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 14 }}>
+              {rooms.map(r => (
+                <span key={r.id} style={{ padding: '3px 10px', borderRadius: 12, fontSize: 11, backgroundColor: r.color + '22', border: `1px solid ${r.color}55`, color: 'var(--ink)' }}>
+                  {r.name} — {r.w}′×{r.h}′
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Legacy products catalog — only for projects without the new layout pipeline */}
+      {!layoutOptions && (editedPlans || project.floorPlans) && (
         <div style={{ marginBottom: 40 }}>
           <h3 style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 400, marginBottom: 6, color: 'var(--ink)' }}>
             Furniture &amp; Fixture Placement
@@ -1359,7 +1484,7 @@ function EngineeringTab({ project, layoutOptions, selectedLayoutId, type }: {
   selectedLayoutId: 'option-a' | 'option-b' | 'option-c';
   type: 'electrical' | 'plumbing' | 'structural';
 }) {
-  const [activeFloor, setActiveFloor] = useState<'ground' | 'first' | 'terrace'>('ground');
+  const [activeFloor, setActiveFloor] = useState<number>(0);
   const [optionId, setOptionId] = useState<'option-a' | 'option-b' | 'option-c'>(selectedLayoutId);
   const req = project.requirements;
   const plotSettings: PlotSettings = project.plotSettings || {
@@ -1384,20 +1509,19 @@ function EngineeringTab({ project, layoutOptions, selectedLayoutId, type }: {
   // Fall back to legacy renderer if no Vastu rooms
   if (!selectedRooms || selectedRooms.length === 0) {
     const plans = project.floorPlans || [];
-    const floorIdx = activeFloor === 'ground' ? 0 : activeFloor === 'first' ? 1 : 2;
-    const plan = plans[floorIdx];
+    const plan = plans[activeFloor];
     return (
       <div>
         <SectionTitle>{titles[type]}</SectionTitle>
         <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
           {plans.map((_, i) => (
-            <button key={i} onClick={() => setActiveFloor(i === 0 ? 'ground' : i === 1 ? 'first' : 'terrace')} style={{
+            <button key={i} onClick={() => setActiveFloor(i)} style={{
               padding: '8px 20px', borderRadius: 4, fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
-              border: `1.5px solid ${floorIdx === i ? 'var(--blueprint)' : 'var(--line-strong)'}`,
-              backgroundColor: floorIdx === i ? 'var(--blueprint)' : 'white',
-              color: floorIdx === i ? 'white' : 'var(--steel)',
+              border: `1.5px solid ${activeFloor === i ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+              backgroundColor: activeFloor === i ? 'var(--blueprint)' : 'white',
+              color: activeFloor === i ? 'white' : 'var(--steel)',
             }}>
-              {i === 0 ? 'Ground Floor' : i === 1 ? 'First Floor' : 'Second Floor'}
+              {floorLabel(i, plans.length)}
             </button>
           ))}
         </div>
@@ -1406,26 +1530,23 @@ function EngineeringTab({ project, layoutOptions, selectedLayoutId, type }: {
     );
   }
 
-  const floorNum = activeFloor === 'ground' ? 0 : activeFloor === 'first' ? 1 : 2;
-  const floorRooms = selectedRooms.filter(r => r.floor === floorNum);
-
-  const floorTabs: ('ground' | 'first' | 'terrace')[] = ['ground'];
-  if (req.floors >= 2) floorTabs.push('first');
-  if (req.floors >= 3) floorTabs.push('terrace');
+  const mepFloorIds = Array.from(new Set(selectedRooms.map(r => r.floor))).sort((a, b) => a - b);
+  const mepActiveFloor = mepFloorIds.includes(activeFloor) ? activeFloor : (mepFloorIds[0] ?? 0);
+  const floorRooms = selectedRooms.filter(r => r.floor === mepActiveFloor);
 
   return (
     <div style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8, flexShrink: 0, flexWrap: 'wrap' }}>
         <SectionTitle>{titles[type]}</SectionTitle>
         <div style={{ display: 'flex', gap: 8 }}>
-          {floorTabs.map(f => (
-            <button key={f} onClick={() => setActiveFloor(f)} style={{
+          {mepFloorIds.map(fl => (
+            <button key={fl} onClick={() => setActiveFloor(fl)} style={{
               padding: '6px 14px', borderRadius: 4, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
-              border: `1.5px solid ${activeFloor === f ? 'var(--blueprint)' : 'var(--line-strong)'}`,
-              backgroundColor: activeFloor === f ? 'var(--blueprint)' : 'white',
-              color: activeFloor === f ? 'white' : 'var(--steel)',
+              border: `1.5px solid ${mepActiveFloor === fl ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+              backgroundColor: mepActiveFloor === fl ? 'var(--blueprint)' : 'white',
+              color: mepActiveFloor === fl ? 'white' : 'var(--steel)',
             }}>
-              {f === 'ground' ? 'Ground Floor' : f === 'first' ? 'First Floor' : 'Second Floor'}
+              {floorLabel(fl, mepFloorIds.length)}
             </button>
           ))}
         </div>
@@ -1485,7 +1606,7 @@ function MEPTab({ project, type }: { project: Project; type: 'electrical' | 'plu
             color: selectedFloor === i ? 'white' : 'var(--steel)',
             fontSize: 13, cursor: 'pointer', fontFamily: 'var(--font-body)',
           }}>
-            {i === 0 ? 'Ground Floor' : i === 1 ? 'First Floor' : i === 2 ? 'Second Floor' : 'Terrace'}
+            {floorLabel(i, project.floorPlans?.length ?? 1)}
           </button>
         ))}
       </div>
@@ -2070,6 +2191,257 @@ function ComplianceTab({ project, complianceData }: { project: Project; complian
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function AIReviewerTab({ project }: { project: Project }) {
+  const ps = project.plotSettings;
+  const [optionId, setOptionId] = useState<'option-a' | 'option-b' | 'option-c'>(project.selectedLayoutId || 'option-a');
+  const opt = project.layoutOptions?.find(o => o.id === optionId) || project.layoutOptions?.[0];
+  
+  if (!ps || !opt) {
+    return (
+      <div style={{ padding: 24, textAlign: 'center', color: 'var(--steel)' }}>
+        No generated layout options found. Please generate options first.
+      </div>
+    );
+  }
+
+  const facing = (ps as any).facing || 'S';
+
+  // Ensure auditor report is available (on the fly self-healing)
+  let audit: AuditorReport = opt.auditorReport;
+  if (!audit) {
+    audit = auditPlan(opt.rooms, ps.bedrooms, ps.floors, opt.id.replace('option-', ''), facing);
+  }
+
+  // Ensure comparative ranking is available
+  let ranking: ComparativeRanking | undefined = opt.comparativeRanking;
+  if (!ranking && project.layoutOptions) {
+    const mockCandidates = project.layoutOptions.map(o => {
+      const strategyId = o.id.replace('option-', '');
+      const strategyName = o.name;
+      const vastu = 80;
+      const ba = (ps.width - 8) * (ps.depth - 8);
+      const q = evaluate(o.rooms, {}, ba, vastu, { vastuEmphasis: strategyId === 'vastu-oriented' });
+      return {
+        strategyId,
+        strategyName,
+        tagline: o.tagline,
+        description: o.description,
+        costMultiplier: o.costMultiplier,
+        rooms: o.rooms,
+        scores: q,
+        auditorReport: o.auditorReport || auditPlan(o.rooms, ps.bedrooms, ps.floors, strategyId, facing)
+      };
+    });
+    ranking = rankPlans(mockCandidates as any);
+  }
+
+  const overallScore = opt.scores?.totalScore ?? opt.scores?.total ?? 80;
+  const scoreColor = overallScore >= 85 ? '#16a34a' : overallScore >= 65 ? '#d97706' : '#dc2626';
+
+  const severityStyles = {
+    fatal: { bg: '#fef2f2', border: '#fca5a5', text: '#991b1b', label: 'Fatal Blocker' },
+    major: { bg: '#fff7ed', border: '#ffedd5', text: '#9a3412', label: 'Major Defect' },
+    minor: { bg: '#fef3c7', border: '#fde68a', text: '#92400e', label: 'Minor Warning' },
+    suggestion: { bg: '#eff6ff', border: '#dbeafe', text: '#1e40af', label: 'Design Suggestion' },
+    recommendation: { bg: '#f0fdf4', border: '#dcfce7', text: '#166534', label: 'Architect Advice' }
+  };
+
+  const getBuildabilityColor = (val: string) => {
+    if (['excellent', 'optimal', 'low'].includes(val)) return '#16a34a';
+    if (['good', 'standard', 'medium'].includes(val)) return '#d97706';
+    return '#dc2626';
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 24, marginBottom: 40 }}>
+      <SectionTitle>AI Architect Reviewer</SectionTitle>
+
+      {/* Option Selector */}
+      {project.layoutOptions && project.layoutOptions.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Reviewing Layout:</span>
+          {project.layoutOptions.map((o, i) => (
+            <button key={o.id} onClick={() => setOptionId(o.id)} style={{
+              padding: '6px 14px', borderRadius: 100, fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)',
+              border: `1.5px solid ${optionId === o.id ? 'var(--blueprint)' : 'var(--line-strong)'}`,
+              backgroundColor: optionId === o.id ? 'var(--blueprint)' : 'white', color: optionId === o.id ? 'white' : 'var(--steel)', fontWeight: optionId === o.id ? 600 : 400,
+              boxShadow: optionId === o.id ? '0 2px 4px rgba(74,114,196,0.15)' : 'none',
+              transition: 'all 0.2s ease'
+            }}>{String.fromCharCode(65 + i)} · {o.name}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Main Reviewer Header */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20, alignItems: 'stretch' }}>
+        {/* Score Card */}
+        <div style={{ padding: '24px', border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+          <ScoreRing score={overallScore} label="Overall Design Quality" color={scoreColor} />
+          <div style={{ fontSize: 12, color: 'var(--steel)', textAlign: 'center', fontStyle: 'italic', maxWidth: 160 }}>
+            {overallScore >= 80 ? 'Highly efficient and standards compliant layout.' : overallScore >= 60 ? 'Standard plan with room for optimization.' : 'Plan requires critical corrections.'}
+          </div>
+        </div>
+
+        {/* Plan Explanation Report */}
+        <div style={{ padding: '24px', border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 18 }}>💡</span>
+            <span style={{ fontSize: 11, color: 'var(--steel)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}>Concept & Strategy Justification</span>
+          </div>
+          <h3 style={{ fontSize: 16, fontWeight: 600, color: 'var(--blueprint)', marginBottom: 4 }}>{audit.explanation.conceptTagline}</h3>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4, fontSize: 13, color: 'var(--ink)' }}>
+            <div>
+              <strong>Zoning:</strong> <span>{audit.explanation.zoningJustification}</span>
+            </div>
+            <div>
+              <strong>Circulation:</strong> <span>{audit.explanation.circulationHighlights}</span>
+            </div>
+            <div>
+              <strong>Ventilation:</strong> <span>{audit.explanation.ventilationStrengths}</span>
+            </div>
+            <div>
+              <strong>Details:</strong> <span>{audit.explanation.roomLayoutDetails}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Buildability & Comparative Ranking */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 20 }}>
+        {/* Buildability Report */}
+        <div style={{ padding: '24px', border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <span style={{ fontSize: 18 }}>🏗</span>
+            <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--blueprint)' }}>Buildability & Safety Report</h3>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--line)', paddingBottom: 10 }}>
+              <span style={{ fontSize: 13, color: 'var(--ink)' }}>Structural Load Safety</span>
+              <span style={{
+                fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 100,
+                color: 'white', backgroundColor: getBuildabilityColor(audit.buildability.structuralLoadSafety)
+              }}>{audit.buildability.structuralLoadSafety.toUpperCase()}</span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--line)', paddingBottom: 10 }}>
+              <span style={{ fontSize: 13, color: 'var(--ink)' }}>Plumbing Grouping Stack</span>
+              <span style={{
+                fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 100,
+                color: 'white', backgroundColor: getBuildabilityColor(audit.buildability.plumbingGrouping)
+              }}>{audit.buildability.plumbingGrouping.toUpperCase()}</span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--line)', paddingBottom: 10 }}>
+              <span style={{ fontSize: 13, color: 'var(--ink)' }}>Construction Complexity</span>
+              <span style={{
+                fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 100,
+                color: 'white', backgroundColor: getBuildabilityColor(audit.buildability.constructionComplexity)
+              }}>{audit.buildability.constructionComplexity.toUpperCase()}</span>
+            </div>
+
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <span style={{ fontSize: 13, color: 'var(--ink)' }}>Estimated Material Waste</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--blueprint)' }}>{audit.buildability.estimatedMaterialWastePercent}%</span>
+              </div>
+              <div style={{ height: 6, backgroundColor: 'var(--paper-dark)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: 3,
+                  width: `${audit.buildability.estimatedMaterialWastePercent}%`,
+                  backgroundColor: audit.buildability.estimatedMaterialWastePercent > 15 ? '#dc2626' : audit.buildability.estimatedMaterialWastePercent > 8 ? '#d97706' : '#16a34a'
+                }} />
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--steel)', marginTop: 4 }}>Lower waste indicates better structural spans and grid symmetry.</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Comparative Ranking */}
+        {ranking && (
+          <div style={{ padding: '24px', border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <span style={{ fontSize: 18 }}>📊</span>
+              <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--blueprint)' }}>Comparative Ranking Report</h3>
+            </div>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {ranking.rankings.map((r, i) => {
+                const matchName = project.layoutOptions?.[i]?.name || r.optionId;
+                const matchesCurrent = project.layoutOptions?.[i]?.id === optionId;
+                
+                return (
+                  <div key={i} style={{
+                    padding: '10px 14px', borderRadius: 8, border: `1px solid ${matchesCurrent ? 'var(--blueprint-light)' : 'var(--line)'}`,
+                    backgroundColor: matchesCurrent ? 'rgba(74,114,196,0.03)' : 'var(--paper)',
+                    display: 'flex', flexDirection: 'column', gap: 4
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--blueprint)' }}>
+                        Rank #{r.rank}: {matchName}
+                      </span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--blueprint)' }}>{r.score}/100</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--steel)' }}>{r.summary}</div>
+                    <div style={{ display: 'flex', gap: 10, fontSize: 11, marginTop: 4 }}>
+                      <span style={{ color: '#16a34a' }}>✓ Best for: {r.bestFor}</span>
+                      <span style={{ color: '#dc2626' }}>✗ Worse for: {r.worseFor}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Severity Logs */}
+      <div style={{ border: '1px solid var(--line)', borderRadius: 10, backgroundColor: 'white', padding: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18 }}>
+          <span style={{ fontSize: 18 }}>🔍</span>
+          <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--blueprint)' }}>Architectural Review Logs</h3>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {[
+            { list: audit.fatalIssues, type: 'fatal' },
+            { list: audit.majorIssues, type: 'major' },
+            { list: audit.minorIssues, type: 'minor' },
+            { list: audit.suggestions, type: 'suggestion' },
+            { list: audit.recommendations, type: 'recommendation' }
+          ].map((grp, idx) => {
+            if (!grp.list || grp.list.length === 0) return null;
+            const style = severityStyles[grp.type as keyof typeof severityStyles];
+            return (
+              <div key={idx} style={{
+                borderRadius: 8, border: `1px solid ${style.border}`, backgroundColor: style.bg, padding: 16
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                    color: 'white', backgroundColor: style.text, padding: '2px 8px', borderRadius: 4
+                  }}>{style.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 500, color: style.text }}>{grp.list.length} item{grp.list.length > 1 ? 's' : ''} detected</span>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {grp.list.map((item, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, color: 'var(--ink)' }}>
+                      <span style={{ color: style.text, flexShrink: 0 }}>▪</span>
+                      <span style={{ lineHeight: 1.5 }}>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

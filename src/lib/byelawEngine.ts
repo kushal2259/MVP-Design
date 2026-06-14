@@ -1,4 +1,19 @@
 import type { RoomLayout, PlotSettings } from '@/types';
+import {
+  validateRoom,
+  validateFurnitureFit,
+  validateVentilation,
+  validateDoor,
+  validateWindow,
+  validateStairs,
+  validateParking,
+  validateAdjacency,
+  validatePlumbing,
+  validateShape,
+  validateCirculation
+} from './planner/architecturalStandards';
+import { validateLayout } from './planner/validationEngine';
+import { auditPlan } from './planner/qualityEngine';
 
 // ============================================================================
 //  NBC INDIA + MUNICIPAL BYELAW COMPLIANCE ENGINE
@@ -93,6 +108,42 @@ export function analyzeByelaws(rooms: RoomLayout[], settings: PlotSettings): Bye
   const actualGC = +(footprint / plotArea).toFixed(2);
 
   const checks: ByelawCheck[] = [];
+
+  // ── ARCHITECTURAL VALIDATION ENGINE INTEGRATION ──
+  const valReport = validateLayout(rooms, settings.bedrooms, settings.floors);
+  for (const err of valReport.errors) {
+    checks.push({
+      category: 'Validation Engine (Errors)',
+      item: 'Structural/Architectural Limit',
+      required: 'Compliance',
+      actual: 'Critical Failure',
+      status: 'fail',
+      note: err,
+    });
+  }
+  for (const warn of valReport.warnings) {
+    checks.push({
+      category: 'Validation Engine (Warnings)',
+      item: 'Design recommendation',
+      required: 'Clearance/Proximity standard',
+      actual: 'Sub-optimal design',
+      status: 'warn',
+      note: warn,
+    });
+  }
+
+  // ── PLAN AUDITOR RECOMMENDATIONS INTEGRATION ──
+  const audit = auditPlan(rooms, settings.bedrooms, settings.floors);
+  for (const rec of audit.recommendations) {
+    checks.push({
+      category: 'Plan Auditor (Recommendations)',
+      item: 'Architectural Best Practice',
+      required: 'Optimal design standard',
+      actual: 'Recommendation',
+      status: 'pass',
+      note: rec,
+    });
+  }
 
   // FAR
   const farStatus: CheckStatus = actualFar <= rule.far ? 'pass' : actualFar <= rule.far * 1.05 ? 'warn' : 'fail';
@@ -201,6 +252,164 @@ export function analyzeByelaws(rooms: RoomLayout[], settings: PlotSettings): Bye
     status: hasParking ? 'pass' : 'warn',
     note: 'Most municipalities require 1 ECS per dwelling unit.',
   });
+
+  // ── CENTRALIZED ARCHITECTURAL STANDARDS CHECKS ──
+
+  // 1. Adjacency checks
+  const adjIssues = validateAdjacency(rooms);
+  for (const issue of adjIssues) {
+    checks.push({
+      category: 'Adjacency Standards',
+      item: 'Room Relationship',
+      required: 'Compliant adjacency/walls',
+      actual: 'Violation',
+      status: issue.type === 'error' ? 'fail' : 'warn',
+      note: issue.message,
+    });
+  }
+
+  // 2. Plumbing checks
+  const plumbIssues = validatePlumbing(rooms);
+  for (const issue of plumbIssues) {
+    checks.push({
+      category: 'Plumbing Layout',
+      item: 'Stack Proximity',
+      required: 'Wet core proximity limit',
+      actual: 'Exceeded',
+      status: issue.type === 'error' ? 'fail' : 'warn',
+      note: issue.message,
+    });
+  }
+
+  // 3. Circulation checks
+  const circIssues = validateCirculation(rooms);
+  for (const issue of circIssues) {
+    checks.push({
+      category: 'Circulation Standards',
+      item: 'Corridor Width / dead-end check',
+      required: 'Standard corridor specs',
+      actual: 'Non-compliant',
+      status: issue.type === 'error' ? 'fail' : 'warn',
+      note: issue.message,
+    });
+  }
+
+  // Room-specific validation
+  for (const r of rooms) {
+    if (r.type === 'garden') continue;
+
+    if (r.type === 'parking') {
+      const parkIssues = validateParking(r);
+      for (const issue of parkIssues) {
+        checks.push({
+          category: 'Parking Standards',
+          item: `${r.name} clearance`,
+          required: 'Clear width/length for parking',
+          actual: 'Tight clearance',
+          status: 'warn',
+          note: issue.message,
+        });
+      }
+      continue;
+    }
+
+    // Dimension, Area, Aspect Ratio check
+    const roomIssues = validateRoom(r);
+    for (const issue of roomIssues) {
+      checks.push({
+        category: 'Room Dimension Standards',
+        item: `${r.name} ${issue.field}`,
+        required: 'Standard room metrics',
+        actual: 'Non-compliant',
+        status: issue.type === 'error' ? 'fail' : 'warn',
+        note: issue.message,
+      });
+    }
+
+    // Furniture Fit checks
+    const furnIssues = validateFurnitureFit(r);
+    for (const issue of furnIssues) {
+      checks.push({
+        category: 'Furniture Fit & Usability',
+        item: `${r.name} layout`,
+        required: 'Fits standard furniture + clearance',
+        actual: 'Cramped space',
+        status: issue.type === 'error' ? 'fail' : 'warn',
+        note: issue.message,
+      });
+    }
+
+    // Ventilation checks
+    const ventIssues = validateVentilation(r);
+    for (const issue of ventIssues) {
+      checks.push({
+        category: 'Ventilation & Openings',
+        item: `${r.name} window/ventilator`,
+        required: 'Min window area or ventilator',
+        actual: 'Insufficient ventilation',
+        status: issue.type === 'error' ? 'fail' : 'warn',
+        note: issue.message,
+      });
+    }
+
+    // Shape checks
+    const shapeIssues = validateShape(r);
+    for (const issue of shapeIssues) {
+      checks.push({
+        category: 'Shape Standards',
+        item: `${r.name} shape`,
+        required: 'Simple geometries',
+        actual: 'Irregular shape',
+        status: issue.type === 'error' ? 'fail' : 'warn',
+        note: issue.message,
+      });
+    }
+
+    // Staircase checks
+    if (r.type === 'staircase') {
+      const stairIssues = validateStairs(r);
+      for (const issue of stairIssues) {
+        checks.push({
+          category: 'Staircase Standards',
+          item: `${r.name} flight/landing`,
+          required: 'Flight width and landings',
+          actual: 'Non-compliant',
+          status: issue.type === 'error' ? 'fail' : 'warn',
+          note: issue.message,
+        });
+      }
+    }
+
+    // Door check
+    for (const d of r.doors) {
+      const doorIssues = validateDoor(d, r.type);
+      for (const issue of doorIssues) {
+        checks.push({
+          category: 'Door Standards',
+          item: `${r.name} door width`,
+          required: 'Standard clear opening',
+          actual: 'Narrow door',
+          status: issue.type === 'error' ? 'fail' : 'warn',
+          note: issue.message,
+        });
+      }
+    }
+
+    // Window check
+    for (const w of r.windows) {
+      const winIssues = validateWindow(w, r.type);
+      for (const issue of winIssues) {
+        checks.push({
+          category: 'Window Standards',
+          item: `${r.name} window width`,
+          required: 'Standard window width',
+          actual: 'Narrow window',
+          status: issue.type === 'error' ? 'fail' : 'warn',
+          note: issue.message,
+        });
+      }
+    }
+  }
 
   const pass = checks.filter(c => c.status === 'pass').length + (farStatus === 'pass' ? 1 : 0) + (gcStatus === 'pass' ? 1 : 0);
   const warn = checks.filter(c => c.status === 'warn').length + (farStatus === 'warn' ? 1 : 0) + (gcStatus === 'warn' ? 1 : 0);

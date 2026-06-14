@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -48,11 +48,11 @@ export default function NewProjectPage() {
     if (step === 1) {
       if (!name.trim()) newErrors.name = 'Project name is required';
       if (!req.location.trim()) newErrors.location = 'Location is required';
-      if (req.plotWidth < 15 || req.plotWidth > 300) newErrors.plotWidth = 'Width must be 15–300 ft';
-      if (req.plotDepth < 15 || req.plotDepth > 300) newErrors.plotDepth = 'Depth must be 15–300 ft';
+      if (req.plotWidth < 15 || req.plotWidth > 300) newErrors.plotWidth = 'Width must be 15â€“300 ft';
+      if (req.plotDepth < 15 || req.plotDepth > 300) newErrors.plotDepth = 'Depth must be 15â€“300 ft';
     }
     if (step === 2) {
-      if (req.budget < 5) newErrors.budget = 'Minimum budget is ₹5 lakhs';
+      if (req.budget < 5) newErrors.budget = 'Minimum budget is â‚¹5 lakhs';
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -119,7 +119,7 @@ export default function NewProjectPage() {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         backgroundColor: 'var(--paper)',
       }}>
-        <Link href="/dashboard" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Link href="/dashboard/bungalow" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
           <svg width="24" height="24" viewBox="0 0 28 28" fill="none">
             <rect x="2" y="2" width="24" height="24" rx="2" stroke="var(--blueprint)" strokeWidth="1.5"/>
             <path d="M7 21L21 7M7 7h14M7 7v14" stroke="var(--amber)" strokeWidth="1.5" strokeLinecap="round"/>
@@ -130,7 +130,7 @@ export default function NewProjectPage() {
       </div>
 
       <div style={{ flex: 1, display: 'flex' }}>
-        {/* Left sidebar: steps (hidden on mobile — nav shows current step) */}
+        {/* Left sidebar: steps (hidden on mobile â€” nav shows current step) */}
         <div style={{
           width: 280, borderRight: '1px solid var(--line)',
           padding: '48px 32px',
@@ -159,7 +159,7 @@ export default function NewProjectPage() {
                   color: step >= s.n ? 'white' : 'var(--steel)',
                   fontSize: 12, fontWeight: 600, flexShrink: 0,
                 }}>
-                  {step > s.n ? '✓' : s.n}
+                  {step > s.n ? 'âœ“' : s.n}
                 </div>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 500, color: step === s.n ? 'var(--blueprint)' : step > s.n ? 'var(--ink)' : 'var(--steel)' }}>{s.title}</div>
@@ -309,7 +309,7 @@ export default function NewProjectPage() {
                       </button>
                     ))}
                   </div>
-                  <p style={{ fontSize: 12, color: 'var(--steel)', marginTop: 8 }}>{req.bhk} Bedrooms · {req.bhk} Bathrooms (estimated)</p>
+                  <p style={{ fontSize: 12, color: 'var(--steel)', marginTop: 8 }}>{req.bhk} Bedrooms Â· {req.bhk} Bathrooms (estimated)</p>
                 </div>
 
                 <div>
@@ -333,7 +333,7 @@ export default function NewProjectPage() {
                 </div>
 
                 <div>
-                  <label style={labelStyle}>Budget (₹ in Lakhs)</label>
+                  <label style={labelStyle}>Budget (â‚¹ in Lakhs)</label>
                   <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
                     <input
                       type="range" min="10" max="500" step="5"
@@ -347,13 +347,13 @@ export default function NewProjectPage() {
                       fontFamily: 'var(--font-display)', fontSize: 20,
                       color: 'var(--amber)', textAlign: 'center',
                     }}>
-                      ₹{req.budget}L
+                      â‚¹{req.budget}L
                     </div>
                   </div>
                   {errors.budget && <p style={{ color: '#ef4444', fontSize: 12, marginTop: 4 }}>{errors.budget}</p>}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-                    <span style={{ fontSize: 11, color: 'var(--steel)' }}>Economy: ₹{Math.round(req.budget * 0.8)}L</span>
-                    <span style={{ fontSize: 11, color: 'var(--steel)' }}>Premium: ₹{Math.round(req.budget * 1.4)}L</span>
+                    <span style={{ fontSize: 11, color: 'var(--steel)' }}>Economy: â‚¹{Math.round(req.budget * 0.8)}L</span>
+                    <span style={{ fontSize: 11, color: 'var(--steel)' }}>Premium: â‚¹{Math.round(req.budget * 1.4)}L</span>
                   </div>
                 </div>
               </div>
@@ -413,7 +413,7 @@ export default function NewProjectPage() {
                     onBlur={e => (e.target.style.borderColor = 'var(--line-strong)')}
                   />
                   <p style={{ fontSize: 12, color: 'var(--steel)', marginTop: 6 }}>
-                    🎙 Tap the mic and describe your dream home in <strong>Hindi or English</strong> — our AI understands natural language.
+                    ðŸŽ™ Tap the mic and describe your dream home in <strong>Hindi or English</strong> â€” our AI understands natural language.
                   </p>
                 </div>
               </div>
@@ -433,17 +433,17 @@ export default function NewProjectPage() {
               }}>
                 <div style={{ backgroundColor: 'var(--blueprint)', color: 'white', padding: '20px 28px' }}>
                   <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 500 }}>{name || `${req.bhk} BHK at ${req.location}`}</h2>
-                  <p style={{ fontSize: 13, opacity: 0.7, marginTop: 4 }}>{req.location} · {req.style} style</p>
+                  <p style={{ fontSize: 13, opacity: 0.7, marginTop: 4 }}>{req.location} Â· {req.style} style</p>
                 </div>
                 <div style={{ padding: '24px 28px' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 40px' }}>
                     {[
-                      { label: 'Plot Dimensions', value: `${req.plotWidth}×${req.plotDepth} ft (${req.plotSize} sq yd)` },
+                      { label: 'Plot Dimensions', value: `${req.plotWidth}Ã—${req.plotDepth} ft (${req.plotSize} sq yd)` },
                       { label: 'Plot Shape', value: req.plotShape.charAt(0).toUpperCase() + req.plotShape.slice(1) },
                       { label: 'Floors', value: req.floors === 1 ? 'Ground only' : `G+${req.floors - 1}` },
                       { label: 'BHK', value: `${req.bhk} Bedroom, ${req.bhk} Bath` },
                       { label: 'Style', value: req.style.charAt(0).toUpperCase() + req.style.slice(1) },
-                      { label: 'Budget', value: `₹${req.budget} Lakhs` },
+                      { label: 'Budget', value: `â‚¹${req.budget} Lakhs` },
                       { label: 'Special Rooms', value: req.specialRooms.length > 0 ? req.specialRooms.join(', ') : 'None' },
                     ].map((item, i) => (
                       <div key={i}>
@@ -480,7 +480,7 @@ export default function NewProjectPage() {
                     'MEP draft layouts',
                   ].map((item, i) => (
                     <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: 'var(--ink)' }}>
-                      <span style={{ color: 'var(--blueprint)', fontSize: 10 }}>●</span>
+                      <span style={{ color: 'var(--blueprint)', fontSize: 10 }}>â—</span>
                       {item}
                     </div>
                   ))}
@@ -495,7 +495,7 @@ export default function NewProjectPage() {
                 fontSize: 12, color: '#92400e',
                 lineHeight: 1.6,
               }}>
-                ⚠ <strong>Professional Review Required:</strong> All AI-generated drawings are preliminary drafts for architect review. Structural, electrical, plumbing, HVAC, fire safety, and municipal compliance must be verified by licensed professionals before construction.
+                âš  <strong>Professional Review Required:</strong> All AI-generated drawings are preliminary drafts for architect review. Structural, electrical, plumbing, HVAC, fire safety, and municipal compliance must be verified by licensed professionals before construction.
               </div>
             </div>
           )}
@@ -510,16 +510,16 @@ export default function NewProjectPage() {
                 fontSize: 14, cursor: 'pointer',
                 fontFamily: 'var(--font-body)',
               }}>
-                ← Back
+                â† Back
               </button>
             ) : (
-              <Link href="/dashboard" style={{
+              <Link href="/dashboard/bungalow" style={{
                 padding: '12px 28px', borderRadius: 4,
                 border: '1.5px solid var(--line-strong)',
                 color: 'var(--ink)', textDecoration: 'none',
                 fontSize: 14,
               }}>
-                ← Cancel
+                â† Cancel
               </Link>
             )}
 
@@ -530,7 +530,7 @@ export default function NewProjectPage() {
                 border: 'none', fontSize: 14, cursor: 'pointer',
                 fontFamily: 'var(--font-body)', fontWeight: 500,
               }}>
-                Continue →
+                Continue â†’
               </button>
             ) : (
               <button onClick={handleSubmit} disabled={submitting} style={{
@@ -541,7 +541,7 @@ export default function NewProjectPage() {
                 boxShadow: '0 4px 20px rgba(200,133,58,0.3)',
                 opacity: submitting ? 0.7 : 1,
               }}>
-                {submitting ? 'Creating…' : 'Generate Design Package →'}
+                {submitting ? 'Creatingâ€¦' : 'Generate Design Package â†’'}
               </button>
             )}
           </div>
@@ -583,14 +583,14 @@ function VoiceInput({ onTranscript }: { onTranscript: (t: string) => void }) {
   };
 
   if (!supported) {
-    return <span style={{ fontSize: 11, color: 'var(--steel)' }}>🎙 Voice input not supported in this browser</span>;
+    return <span style={{ fontSize: 11, color: 'var(--steel)' }}>ðŸŽ™ Voice input not supported in this browser</span>;
   }
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <select value={lang} onChange={e => setLang(e.target.value as 'hi-IN' | 'en-IN')} disabled={listening}
         style={{ fontSize: 11, padding: '4px 8px', borderRadius: 4, border: '1.5px solid var(--line-strong)', backgroundColor: 'white', color: 'var(--steel)', cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
-        <option value="hi-IN">हिन्दी (Hindi)</option>
+        <option value="hi-IN">à¤¹à¤¿à¤¨à¥à¤¦à¥€ (Hindi)</option>
         <option value="en-IN">English (India)</option>
       </select>
       <button type="button" onClick={toggle} style={{
@@ -600,8 +600,8 @@ function VoiceInput({ onTranscript }: { onTranscript: (t: string) => void }) {
         backgroundColor: listening ? '#dc2626' : 'white',
         color: listening ? 'white' : 'var(--amber)', fontSize: 12, fontWeight: 600,
       }}>
-        <span style={{ fontSize: 13 }}>🎙</span>
-        {listening ? 'Listening… tap to stop' : 'Speak'}
+        <span style={{ fontSize: 13 }}>ðŸŽ™</span>
+        {listening ? 'Listeningâ€¦ tap to stop' : 'Speak'}
       </button>
     </div>
   );

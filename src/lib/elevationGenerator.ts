@@ -95,6 +95,48 @@ export function generateElevation(
     });
   }
 
+  // Draw balcony projections on upper floors
+  for (let f = 1; f < floors; f++) {
+    const floorRooms = allRooms.filter(r => r.floor === f);
+    const balconies = floorRooms.filter(r => r.type === 'balcony');
+    if (balconies.length === 0) continue;
+    const floorInterior = interior(floorRooms);
+    if (floorInterior.length === 0) continue;
+    const floorBB = bbox(floorRooms);
+    for (const bal of balconies) {
+      const fy = yGround - (f + 1) * FLOOR_H * S;
+      let onSide = false;
+      let balStart = 0, balLen = 0;
+      if (side === 'front' && Math.abs((bal.y + bal.h) - floorBB.y1) < 1.5) {
+        onSide = true; balStart = bal.x - bb.x0; balLen = bal.w;
+      } else if (side === 'rear' && Math.abs(bal.y - floorBB.y0) < 1.5) {
+        onSide = true; balStart = bal.x - bb.x0; balLen = bal.w;
+      } else if (side === 'left' && Math.abs(bal.x - floorBB.x0) < 1.5) {
+        onSide = true; balStart = bal.y - bb.y0; balLen = bal.h;
+      } else if (side === 'right' && Math.abs((bal.x + bal.w) - floorBB.x1) < 1.5) {
+        onSide = true; balStart = bal.y - bb.y0; balLen = bal.h;
+      }
+      if (!onSide || balLen <= 0) continue;
+      const bx = x0 + balStart * S;
+      const bw = balLen * S;
+      const slabY = fy + FLOOR_H * S;
+      const railH = FLOOR_H * S * 0.45;
+      // Cantilever slab
+      svg += `<rect x="${bx - 4}" y="${slabY - 5}" width="${bw + 8}" height="6" fill="${COL.roof}" opacity="0.9"/>`;
+      // Glass railing
+      svg += `<rect x="${bx}" y="${slabY - railH}" width="${bw}" height="${railH}" fill="${COL.glass}" stroke="${COL.frame}" stroke-width="1.2" opacity="0.45"/>`;
+      // Railing posts
+      const postSpacing = S * 2;
+      for (let p = 0; p * postSpacing <= bw; p++) {
+        const px = bx + p * postSpacing;
+        svg += `<line x1="${px}" y1="${slabY - railH}" x2="${px}" y2="${slabY}" stroke="${COL.frame}" stroke-width="1.2"/>`;
+      }
+      // Bottom cap line
+      svg += `<line x1="${bx}" y1="${slabY - railH}" x2="${bx + bw}" y2="${slabY - railH}" stroke="${COL.frame}" stroke-width="1.5"/>`;
+      svg += `<text x="${bx + bw / 2}" y="${slabY - railH - 4}" text-anchor="middle" font-family="monospace" font-size="7" fill="${COL.amber}">BALCONY</text>`;
+    }
+  }
+
   // roof / parapet
   if (flat) {
     svg += `<rect x="${x0 - 6}" y="${PAD - 6}" width="${facadeW + 12}" height="10" fill="${COL.roof}"/>`;

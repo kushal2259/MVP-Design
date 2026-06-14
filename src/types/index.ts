@@ -87,12 +87,18 @@ export interface TimelinePhase {
   tasks: string[];
 }
 
+export type BuildingType = 'bungalow' | 'apartment' | 'mixed-use' | 'commercial';
+
 export interface Project {
   id: string;
   name: string;
   requirements: ProjectRequirements;
   status: 'requirements' | 'analyzing' | 'planning' | 'generated' | 'reviewing';
   createdAt: string;
+  /** Which module owns this project. Absent = bungalow (legacy projects). */
+  buildingType?: BuildingType;
+  /** Module-specific payload (apartment unit mix, commercial use type, etc.). */
+  moduleData?: Record<string, unknown>;
   analysis?: {
     parsedRequirements: Record<string, string | number>;
     validationNotes: string[];
@@ -152,7 +158,9 @@ export interface FurnitureConfig {
 export interface RoomLayout {
   id: string;
   name: string;
-  type: 'living' | 'kitchen' | 'bedroom' | 'toilet' | 'balcony' | 'staircase' | 'corridor' | 'dining' | 'lobby' | 'parking' | 'garden';
+  type: 'living' | 'kitchen' | 'bedroom' | 'toilet' | 'balcony' | 'staircase' | 'corridor' | 'dining' | 'lobby' | 'parking' | 'garden'
+    // module typologies (apartment / mixed-use / commercial) — renderers fall back to default colors
+    | 'shop' | 'office' | 'lift' | 'refuge' | 'utility' | 'unit' | 'foodcourt' | 'reception' | 'store';
   x: number;
   y: number;
   w: number;
@@ -185,6 +193,9 @@ export interface LayoutOption {
   description: string;
   rooms: RoomLayout[];
   costMultiplier: number;
+  auditorReport?: any;
+  comparativeRanking?: any;
+  scores?: any;
 }
 
 export type ActiveTab =
@@ -207,4 +218,6 @@ export type ActiveTab =
   | 'timeline'
   | 'site-visits'
   | 'compliance'
-  | 'export';
+  | 'export'
+  | 'ai-reviewer';
+

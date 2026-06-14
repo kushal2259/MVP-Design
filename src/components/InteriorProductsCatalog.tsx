@@ -98,6 +98,10 @@ export default function InteriorProductsCatalog({ floorPlans, onPlansChange, act
   );
   const [selectedFloor, setSelectedFloor] = useState(activeFloor);
   const [dragProduct, setDragProduct] = useState<CatalogProduct | null>(null);
+  const [movingItem, setMovingItem] = useState<{
+    id: string; origX: number; origY: number; startMX: number; startMY: number;
+  } | null>(null);
+  const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
 
   const currentPlan = floorPlans[selectedFloor];
   const maxX = Math.max(...(currentPlan?.rooms.map(r => r.x + r.width) || [8])) + 2;
@@ -131,6 +135,28 @@ export default function InteriorProductsCatalog({ floorPlans, onPlansChange, act
     }));
     onPlansChange(updatedPlans);
   };
+
+  const updateItemPos = (itemId: string, x: number, y: number) => {
+    const newItems = placedItems.map(f => f.id === itemId ? { ...f, x, y } : f);
+    setPlacedItems(newItems);
+    const updatedPlans = floorPlans.map((p, i) => ({
+      ...p, furniture: newItems.filter(f => f.floor === i),
+    }));
+    onPlansChange(updatedPlans);
+  };
+
+  const handleSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!movingItem) return;
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const dx = Math.round((e.clientX - movingItem.startMX) / CELL);
+    const dy = Math.round((e.clientY - movingItem.startMY) / CELL);
+    const newX = Math.max(0, movingItem.origX + dx);
+    const newY = Math.max(0, movingItem.origY + dy);
+    updateItemPos(movingItem.id, newX, newY);
+  };
+
+  const handleSvgMouseUp = () => setMovingItem(null);
 
   const handleFloorDrop = (e: React.DragEvent<SVGSVGElement>) => {
     e.preventDefault();
@@ -233,9 +259,12 @@ export default function InteriorProductsCatalog({ floorPlans, onPlansChange, act
             width={maxX * CELL + BORDER * 2}
             height={maxY * CELL + BORDER * 2}
             viewBox={`0 0 ${maxX * CELL + BORDER * 2} ${maxY * CELL + BORDER * 2}`}
-            style={{ display: 'block' }}
+            style={{ display: 'block', cursor: movingItem ? 'grabbing' : 'default' }}
             onDragOver={e => e.preventDefault()}
             onDrop={handleFloorDrop}
+            onMouseMove={handleSvgMouseMove}
+            onMouseUp={handleSvgMouseUp}
+            onMouseLeave={handleSvgMouseUp}
           >
             <rect width={maxX * CELL + BORDER * 2} height={maxY * CELL + BORDER * 2} fill="white" />
 
@@ -282,11 +311,21 @@ export default function InteriorProductsCatalog({ floorPlans, onPlansChange, act
               const iy = BORDER + item.y * CELL;
               const iw = item.width * CELL;
               const ih = item.height * CELL;
+              const isHovered = hoveredItemId === item.id;
+              const isMoving = movingItem?.id === item.id;
               return (
-                <g key={item.id} style={{ cursor: 'pointer' }} onClick={() => removeItem(item.id)}>
+                <g key={item.id}
+                  style={{ cursor: isMoving ? 'grabbing' : 'grab' }}
+                  onMouseEnter={() => setHoveredItemId(item.id)}
+                  onMouseLeave={() => setHoveredItemId(null)}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    setMovingItem({ id: item.id, origX: item.x, origY: item.y, startMX: e.clientX, startMY: e.clientY });
+                  }}
+                >
                   <rect x={ix + 1} y={iy + 1} width={iw - 2} height={ih - 2}
-                    fill={item.color || '#94a3b8'} stroke="#334155" strokeWidth="1.2"
-                    rx="2" opacity="0.82" />
+                    fill={item.color || '#94a3b8'} stroke={isHovered ? '#2563eb' : '#334155'}
+                    strokeWidth={isHovered ? 2 : 1.2} rx="2" opacity="0.85" />
                   {iw > 30 && ih > 20 && (
                     <text x={ix + iw / 2} y={iy + ih / 2} textAnchor="middle" dominantBaseline="middle"
                       fontSize={Math.min(8, iw / item.name.length * 1.3)} fill="#1e293b"
@@ -294,9 +333,14 @@ export default function InteriorProductsCatalog({ floorPlans, onPlansChange, act
                       {item.name}
                     </text>
                   )}
-                  {/* Remove X */}
-                  <text x={ix + iw - 8} y={iy + 9} fontSize="8" fill="#dc2626"
-                    fontWeight="700" style={{ cursor: 'pointer' }}>✕</text>
+                  {/* Delete button — only visible on hover */}
+                  {isHovered && (
+                    <g onClick={(e) => { e.stopPropagation(); removeItem(item.id); }} style={{ cursor: 'pointer' }}>
+                      <circle cx={ix + iw - 6} cy={iy + 6} r={6} fill="#dc2626" />
+                      <text x={ix + iw - 6} y={iy + 9.5} textAnchor="middle" fontSize="8"
+                        fill="white" fontWeight="700" style={{ pointerEvents: 'none' }}>✕</text>
+                    </g>
+                  )}
                 </g>
               );
             })}

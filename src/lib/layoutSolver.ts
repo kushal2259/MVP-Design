@@ -35,7 +35,9 @@ export interface FurnitureConfig {
 export interface RoomLayout {
   id: string;
   name: string;
-  type: 'living' | 'kitchen' | 'bedroom' | 'toilet' | 'balcony' | 'staircase' | 'corridor' | 'dining' | 'lobby' | 'parking' | 'garden';
+  type: 'living' | 'kitchen' | 'bedroom' | 'toilet' | 'balcony' | 'staircase' | 'corridor' | 'dining' | 'lobby' | 'parking' | 'garden'
+    // module typologies (apartment / mixed-use / commercial) — keep in sync with types/index.ts
+    | 'shop' | 'office' | 'lift' | 'refuge' | 'utility' | 'unit' | 'foodcourt' | 'reception' | 'store';
   x: number; // relative to building top-left in feet
   y: number; // relative to building top-left in feet
   w: number; // width in feet

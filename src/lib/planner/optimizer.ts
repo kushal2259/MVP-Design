@@ -7,8 +7,10 @@
 // ============================================================================
 import type { RoomProgram, AdjacencyMatrix, DesignStrategy, LayoutCandidate } from './types';
 import { buildGeometry } from './geometryEngine';
-import { evaluate } from './qualityEngine';
+import { evaluate, auditPlan } from './qualityEngine';
 import { analyzeVastu } from '../vastuEngine';
+import { validateLayout } from './validationEngine';
+import { runPlanningDecisions } from './planningEngine';
 
 const CANDIDATES_PER_STRATEGY = 28;   // generator breadth (≈ 250 total for 9 strategies)
 const ACCEPT_THRESHOLD = 58;          // critic reject line
@@ -43,14 +45,29 @@ export function optimizeDetailed(
       generated++;
       const seed = strategy.seed * 1000 + k * 7 + 13;
       const variation = (((k % 7) - 3) / 45);   // -0.066 .. 0.066 slice jitter
-      const rooms = buildGeometry(program, strategy, adjacency, variation, seed);
+      
+      const decisions = runPlanningDecisions(program, strategy, program.global.facing, seed);
+      const rooms = buildGeometry(program, strategy, adjacency, variation, seed, decisions);
       const vastu = analyzeVastu(rooms, width, depth).score;
       const q = evaluate(rooms, adjacency, ba, vastu, { threshold: ACCEPT_THRESHOLD, vastuEmphasis: strategy.features.vastu });
+
+      const expectedBedrooms = program.rooms.filter(r => r.type === 'bedroom' && r.zone !== 'outdoor').length;
+      const expectedFloors = program.floors;
+      const valReport = validateLayout(rooms, expectedBedrooms, expectedFloors);
+
+      // Validation errors deduct from score but do NOT hard-reject — the quality
+      // engine threshold (58) is the only gate. Hard errors appear in the audit.
+      if (!valReport.valid) {
+        const errorPenalty = Math.min(20, valReport.errors.length * 2);
+        q.total = Math.max(0, q.total - errorPenalty);
+        q.accept = q.total >= ACCEPT_THRESHOLD;
+      }
 
       const cand: LayoutCandidate = {
         strategyId: strategy.id, strategyName: strategy.name, tagline: strategy.tagline,
         description: strategy.description, costMultiplier: strategy.costMultiplier,
         rooms, scores: q, seedName: `${strategy.id}_v${k + 1}`,
+        planningDecisions: decisions,
       };
 
       if (q.accept) {
@@ -73,7 +90,22 @@ export function optimizeDetailed(
     seen.add(c.strategyId); diverse.push(c);
     if (diverse.length >= topN) break;
   }
-  return { candidates: diverse.length ? diverse : winners.slice(0, topN), generated, accepted };
+
+  const finalCandidates = diverse.length ? diverse : winners.slice(0, topN);
+
+  for (const cand of finalCandidates) {
+    const expectedBedrooms = program.rooms.filter(r => r.type === 'bedroom' && r.zone !== 'outdoor').length;
+    const expectedFloors = program.floors;
+    cand.auditorReport = auditPlan(
+      cand.rooms,
+      expectedBedrooms,
+      expectedFloors,
+      cand.strategyId,
+      program.global.facing
+    );
+  }
+
+  return { candidates: finalCandidates, generated, accepted };
 }
 
 /** Back-compat: returns just the ranked candidates. */

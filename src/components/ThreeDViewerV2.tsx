@@ -14,10 +14,13 @@ interface ThreeDViewerProps {
 export default function ThreeDViewer({ rooms, settings }: ThreeDViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = useState<'orbit' | 'walkthrough' | 'video'>('orbit');
-  const [activeFloorView, setActiveFloorView] = useState<'all' | '0' | '1' | '2'>('all');
+  const [activeFloorView, setActiveFloorView] = useState<string>('all');
   const controlsRef = useRef<any>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
+  // viewMode as a ref so switching modes does NOT rebuild the whole scene
+  const viewModeRef = useRef<'orbit' | 'walkthrough' | 'video'>('orbit');
+  useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
 
   // Walkthrough position trackers
   const walkPos = useRef({ x: 25, y: 5.5, z: 25 });
@@ -113,7 +116,7 @@ export default function ThreeDViewer({ rooms, settings }: ThreeDViewerProps) {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // cap DPR — 3x+ retina kills fill rate
     renderer.shadowMap.enabled = true;
 
     // Clear previous renderer elements
@@ -164,6 +167,13 @@ export default function ThreeDViewer({ rooms, settings }: ThreeDViewerProps) {
     const woodMaterial = new THREE.MeshStandardMaterial({ color: '#b45309', roughness: 0.5 });
     const greenMaterial = new THREE.MeshStandardMaterial({ color: '#10b981', roughness: 0.9 });
     const greyMaterial = new THREE.MeshStandardMaterial({ color: '#64748b' });
+    // Shared furniture materials — one instance reused by every furniture piece
+    const blueFabric = new THREE.MeshStandardMaterial({ color: '#1e3a8a', roughness: 0.8 });
+    const whiteCeramic = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.2 });
+    const pillowMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9 });
+    const chromeMat = new THREE.MeshStandardMaterial({ color: '#cbd5e1', metalness: 0.8, roughness: 0.2 });
+    const blackGlass = new THREE.MeshStandardMaterial({ color: '#020617', roughness: 0.1 });
+    const greenFelt = new THREE.MeshStandardMaterial({ color: '#047857', roughness: 0.9 });
 
     // Multi-floor offset (Y in feet)
     const floorHeight = 10;
@@ -250,14 +260,6 @@ export default function ThreeDViewer({ rooms, settings }: ThreeDViewerProps) {
         const fGroup = new THREE.Group();
         fGroup.position.set(fx, baseHeight, fz);
         fGroup.rotation.y = (f.rotation * Math.PI) / 180;
-
-        // Custom materials
-        const blueFabric = new THREE.MeshStandardMaterial({ color: '#1e3a8a', roughness: 0.8 });
-        const whiteCeramic = new THREE.MeshStandardMaterial({ color: '#f8fafc', roughness: 0.2 });
-        const pillowMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9 });
-        const chromeMat = new THREE.MeshStandardMaterial({ color: '#cbd5e1', metalness: 0.8, roughness: 0.2 });
-        const blackGlass = new THREE.MeshStandardMaterial({ color: '#020617', roughness: 0.1 });
-        const greenFelt = new THREE.MeshStandardMaterial({ color: '#047857', roughness: 0.9 });
 
         if (f.type === 'bunk-bed') {
           // Bunk bed frames, ladder, support poles
@@ -771,10 +773,11 @@ export default function ThreeDViewer({ rooms, settings }: ThreeDViewerProps) {
     let reqId: number;
     const animate = () => {
       reqId = requestAnimationFrame(animate);
+      const mode = viewModeRef.current;
 
-      if (viewMode === 'orbit') {
+      if (mode === 'orbit') {
         controls.update();
-      } else if (viewMode === 'walkthrough') {
+      } else if (mode === 'walkthrough') {
         // Walkthrough Mode Camera controls
         camera.position.set(walkPos.current.x, walkPos.current.y, walkPos.current.z);
         const lookTarget = new THREE.Vector3(
@@ -783,7 +786,7 @@ export default function ThreeDViewer({ rooms, settings }: ThreeDViewerProps) {
           walkPos.current.z + Math.cos(walkRotation.current)
         );
         camera.lookAt(lookTarget);
-      } else if (viewMode === 'video') {
+      } else if (mode === 'video') {
         if (videoPlayingRef.current) {
           const delta = (1 / 60) * videoSpeedRef.current;
           videoTimeRef.current += delta;
@@ -840,8 +843,19 @@ export default function ThreeDViewer({ rooms, settings }: ThreeDViewerProps) {
     return () => {
       cancelAnimationFrame(reqId);
       window.removeEventListener('resize', handleResize);
+      // Full GPU cleanup — without this every rebuild leaks a WebGL context
+      controls.dispose();
+      scene.traverse(obj => {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+        const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach(m => m.dispose());
+        else if (mat) mat.dispose();
+      });
+      renderer.dispose();
+      renderer.domElement.remove();
     };
-  }, [rooms, settings, viewMode, activeFloorView]);
+  }, [rooms, settings, activeFloorView]);
 
   // WASD controls for Walkthrough
   useEffect(() => {
@@ -893,26 +907,19 @@ export default function ThreeDViewer({ rooms, settings }: ThreeDViewerProps) {
             >
               All Floors
             </button>
-            <button
-              onClick={() => setActiveFloorView('0')}
-              className={`px-2 py-0.5 rounded transition ${activeFloorView === '0' ? 'bg-emerald-500 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
-            >
-              Ground
-            </button>
-            <button
-              onClick={() => setActiveFloorView('1')}
-              className={`px-2 py-0.5 rounded transition ${activeFloorView === '1' ? 'bg-emerald-500 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
-            >
-              First
-            </button>
-            {settings.floors >= 3 && (
-              <button
-                onClick={() => setActiveFloorView('2')}
-                className={`px-2 py-0.5 rounded transition ${activeFloorView === '2' ? 'bg-emerald-500 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
-              >
-                Second
-              </button>
-            )}
+            {(() => {
+              const floorIds = Array.from(new Set(rooms.map(r => r.floor))).sort((a, b) => a - b);
+              const names = ['Ground', 'First', 'Second', 'Third', 'Fourth'];
+              return floorIds.map(fl => (
+                <button
+                  key={fl}
+                  onClick={() => setActiveFloorView(String(fl))}
+                  className={`px-2 py-0.5 rounded transition ${activeFloorView === String(fl) ? 'bg-emerald-500 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
+                >
+                  {fl === floorIds[floorIds.length - 1] && floorIds.length > 1 ? 'Terrace' : (names[fl] ?? `Floor ${fl}`)}
+                </button>
+              ));
+            })()}
           </div>
 
           {/* Mode Switcher */}
